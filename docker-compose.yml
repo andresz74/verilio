@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: verilio
+      POSTGRES_PASSWORD: verilio
+      POSTGRES_USER: verilio
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U verilio -d verilio"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    ports:
+      - "5432:5432"
+    volumes:
+      - verilio-postgres:/var/lib/postgresql/data
+
+volumes:
+  verilio-postgres:
+

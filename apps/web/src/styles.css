@@ -1,0 +1,11 @@
+@import "tailwindcss";
+@source "../../../packages/ui/src";
+@import "@verilio/ui/styles.css";
+
+@theme inline {
+  --color-canvas: var(--color-bg-canvas);
+  --color-surface: var(--color-bg-surface);
+  --color-subtle: var(--color-bg-subtle);
+  --color-accent: var(--color-accent-default);
+}
+

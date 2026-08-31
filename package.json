@@ -1,0 +1,32 @@
+{
+  "name": "verilio",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "db:generate": "pnpm --filter @verilio/db db:generate",
+    "db:migrate": "pnpm --filter @verilio/db db:migrate",
+    "dev": "pnpm --parallel --filter @verilio/web --filter @verilio/api dev",
+    "dev:api": "pnpm --filter @verilio/api dev",
+    "dev:web": "pnpm --filter @verilio/web dev",
+    "lint": "eslint . --max-warnings=0",
+    "test": "pnpm -r --if-present test",
+    "test:e2e": "playwright test",
+    "test:integration": "pnpm --filter @verilio/api test:integration",
+    "typecheck": "pnpm -r --if-present typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
+    "@types/node": "^26.4.0",
+    "eslint": "^10.9.1",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.11.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.69.0"
+  }
+}
