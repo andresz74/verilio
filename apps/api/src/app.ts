@@ -3,17 +3,24 @@ import { checkDatabaseConnection } from "@verilio/db";
 import Fastify, { type FastifyInstance } from "fastify";
 
 import { ApiError } from "./errors.js";
+import { registerSettingsRoutes } from "./settings-routes.js";
+import {
+  SettingsService,
+  type SettingsServiceContract,
+} from "./settings-service.js";
 
 export type BuildAppOptions = {
   db: VerilioDatabase;
   logger?: boolean;
   readinessCheck?: (db: VerilioDatabase) => Promise<void>;
+  settingsService?: SettingsServiceContract;
 };
 
 export function buildApp({
   db,
   logger = true,
   readinessCheck = checkDatabaseConnection,
+  settingsService = new SettingsService(db),
 }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger,
@@ -38,6 +45,8 @@ export function buildApp({
       });
     }
   });
+
+  registerSettingsRoutes(app, settingsService);
 
   app.setNotFoundHandler((request, reply) =>
     reply.status(404).send({

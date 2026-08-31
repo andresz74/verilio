@@ -8,6 +8,13 @@
       "when": 1788205044362,
       "tag": "0000_hard_fenris",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788209410238,
+      "tag": "0001_military_betty_brant",
+      "breakpoints": true
     }
   ]
 }
