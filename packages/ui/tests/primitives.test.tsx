@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -75,6 +76,31 @@ describe("Dialog", () => {
     expect(screen.getByRole("dialog", { name: "Archive project" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Close dialog" })).toHaveFocus();
 
+    await user.keyboard("{Escape}");
+    expect(trigger).toHaveFocus();
+  });
+
+  it("restores focus when a controlled dialog is conditionally unmounted", async () => {
+    const user = userEvent.setup();
+
+    function ControlledDialogHarness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <Button onClick={() => setOpen(true)}>Edit project</Button>
+          {open ? (
+            <Dialog open title="Edit project" onOpenChange={setOpen}>
+              <TextInput aria-label="Project name" autoFocus />
+            </Dialog>
+          ) : null}
+        </>
+      );
+    }
+
+    render(<ControlledDialogHarness />);
+    const trigger = screen.getByRole("button", { name: "Edit project" });
+    await user.click(trigger);
+    expect(screen.getByRole("textbox", { name: "Project name" })).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(trigger).toHaveFocus();
   });

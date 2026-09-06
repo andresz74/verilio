@@ -3,6 +3,8 @@ import { Navigate, createBrowserRouter } from "react-router-dom";
 import { AppShell } from "./app-shell.js";
 import { PlaceholderPage } from "./placeholder-page.js";
 import { ClientsPage } from "../features/clients/clients-page.js";
+import { ProjectDetailPage } from "../features/projects/project-detail-page.js";
+import { ProjectsPage } from "../features/projects/projects-page.js";
 import { SettingsPage } from "../features/settings/settings-page.js";
 
 export const router = createBrowserRouter([
@@ -44,12 +46,11 @@ export const router = createBrowserRouter([
       },
       {
         path: "projects",
-        element: (
-          <PlaceholderPage
-            title="Projects"
-            description="Organize client work into clear billing contexts."
-          />
-        ),
+        element: <ProjectsPage />,
+      },
+      {
+        path: "projects/:projectId",
+        element: <ProjectDetailPage />,
       },
       {
         path: "invoices",

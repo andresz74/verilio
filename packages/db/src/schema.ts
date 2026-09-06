@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   numeric,
@@ -9,6 +10,7 @@ import {
   text,
   timestamp,
   uuid,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -102,10 +104,72 @@ export const clients = pgTable(
       .defaultNow(),
   },
   (table) => [
+    uniqueIndex("clients_id_user_unique").on(table.id, table.userId),
     index("clients_user_active_idx").on(table.userId, table.active),
     check(
       "clients_default_hourly_rate_nonnegative",
       sql`${table.defaultHourlyRate} IS NULL OR ${table.defaultHourlyRate} >= 0`,
     ),
   ],
+);
+
+export const projects = pgTable(
+  "projects",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    clientId: uuid("client_id").notNull(),
+    name: text("name").notNull(),
+    color: varchar("color", { length: 7 }),
+    defaultHourlyRate: numeric("default_hourly_rate", {
+      precision: 18,
+      scale: 4,
+    }),
+    billableByDefault: boolean("billable_by_default").notNull().default(true),
+    note: text("note"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.clientId, table.userId],
+      foreignColumns: [clients.id, clients.userId],
+      name: "projects_client_owner_fk",
+    }).onDelete("restrict"),
+    index("projects_user_client_active_idx").on(
+      table.userId,
+      table.clientId,
+      table.active,
+    ),
+    check(
+      "projects_default_hourly_rate_nonnegative",
+      sql`${table.defaultHourlyRate} IS NULL OR ${table.defaultHourlyRate} >= 0`,
+    ),
+  ],
+);
+
+export const tasks = pgTable(
+  "tasks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "restrict" }),
+    name: text("name").notNull(),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [index("tasks_project_active_idx").on(table.projectId, table.active)],
 );

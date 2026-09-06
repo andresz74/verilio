@@ -5,18 +5,24 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { registerClientRoutes } from "./client-routes.js";
 import { ClientService, type ClientServiceContract } from "./client-service.js";
 import { ApiError } from "./errors.js";
+import { registerProjectRoutes } from "./project-routes.js";
+import { ProjectService, type ProjectServiceContract } from "./project-service.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
 import {
   SettingsService,
   type SettingsServiceContract,
 } from "./settings-service.js";
+import { registerTaskRoutes } from "./task-routes.js";
+import { TaskService, type TaskServiceContract } from "./task-service.js";
 
 export type BuildAppOptions = {
   db: VerilioDatabase;
   logger?: boolean;
   readinessCheck?: (db: VerilioDatabase) => Promise<void>;
   clientService?: ClientServiceContract;
+  projectService?: ProjectServiceContract;
   settingsService?: SettingsServiceContract;
+  taskService?: TaskServiceContract;
 };
 
 export function buildApp({
@@ -24,7 +30,9 @@ export function buildApp({
   logger = true,
   readinessCheck = checkDatabaseConnection,
   clientService = new ClientService(db),
+  projectService = new ProjectService(db),
   settingsService = new SettingsService(db),
+  taskService = new TaskService(db),
 }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger,
@@ -52,6 +60,8 @@ export function buildApp({
 
   registerSettingsRoutes(app, settingsService);
   registerClientRoutes(app, clientService);
+  registerProjectRoutes(app, projectService);
+  registerTaskRoutes(app, taskService);
 
   app.setNotFoundHandler((request, reply) =>
     reply.status(404).send({

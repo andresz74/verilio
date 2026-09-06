@@ -1,6 +1,6 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import { IconButton } from "./icon-button.js";
 
@@ -23,6 +23,19 @@ export function Dialog({
   title,
   trigger,
 }: DialogProps) {
+  const restoreFocusRef = useRef<HTMLElement | null>(
+    typeof document !== "undefined" && document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+
+  useEffect(
+    () => () => {
+      restoreFocusRef.current?.focus();
+    },
+    [],
+  );
+
   return (
     <DialogPrimitive.Root
       {...(open === undefined ? {} : { open })}
