@@ -25,6 +25,7 @@ import { getProjects, projectKeys } from "../projects/project-api.js";
 import {
   TimeEntryApiError,
   createTimeEntry,
+  timeEntryKeys,
   timerKeys,
   updateTimeEntry,
 } from "./time-entry-api.js";
@@ -116,7 +117,7 @@ export function TimeEntryFormDialog({
         : createTimeEntry(input as ManualTimeEntryInput);
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
+      void queryClient.invalidateQueries({ queryKey: timeEntryKeys.all });
       void queryClient.invalidateQueries({ queryKey: timerKeys.current });
       onOpenChange(false);
     },

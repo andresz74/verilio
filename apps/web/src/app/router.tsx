@@ -7,6 +7,7 @@ import { ProjectDetailPage } from "../features/projects/project-detail-page.js";
 import { ProjectsPage } from "../features/projects/projects-page.js";
 import { SettingsPage } from "../features/settings/settings-page.js";
 import { TimerPage } from "../features/timer/timer-page.js";
+import { TimesheetPage } from "../features/timesheet/timesheet-page.js";
 
 export const router = createBrowserRouter([
   {
@@ -20,12 +21,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "timesheet",
-        element: (
-          <PlaceholderPage
-            title="Timesheet"
-            description="Review and correct your tracked work by day."
-          />
-        ),
+        element: <TimesheetPage />,
       },
       {
         path: "reports",

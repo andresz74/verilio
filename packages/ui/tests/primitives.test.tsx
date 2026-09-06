@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   Button,
   Checkbox,
+  DateRangePicker,
   Dialog,
   DialogClose,
   Field,
@@ -49,6 +50,35 @@ describe("form primitives", () => {
   it("renders explicit status text", () => {
     render(<StatusBadge tone="success">Paid</StatusBadge>);
     expect(screen.getByText("Paid")).toBeVisible();
+  });
+
+  it("labels the reusable date-range controls and supports keyboard changes", async () => {
+    const user = userEvent.setup();
+
+    function RangeHarness() {
+      const [preset, setPreset] = useState("this-week");
+      const [range, setRange] = useState({ from: "2026-08-31", to: "2026-09-06" });
+      return (
+        <DateRangePicker
+          preset={preset}
+          presets={[
+            { value: "this-week", label: "This week" },
+            { value: "custom", label: "Custom range" },
+          ]}
+          from={range.from}
+          to={range.to}
+          onPresetChange={setPreset}
+          onChange={setRange}
+        />
+      );
+    }
+
+    render(<RangeHarness />);
+    expect(screen.getByLabelText("From")).toHaveValue("2026-08-31");
+    await user.selectOptions(screen.getByLabelText("Period"), "custom");
+    expect(screen.getByLabelText("Period")).toHaveValue("custom");
+    await user.tab();
+    expect(screen.getByLabelText("From")).toHaveFocus();
   });
 });
 

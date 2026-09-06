@@ -198,3 +198,146 @@ describe("M4 manual entries and historical edits", () => {
     })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
   });
 });
+
+describe("M5 historical timesheet query", () => {
+  it("filters by authoritative work date, paginates deterministically, and returns complete daily totals", async () => {
+    const own = await setupOwner(OWNER_A);
+    const other = await setupOwner(OWNER_B);
+    const service = new TimeEntryService(db, OWNER_A);
+    const common = {
+      clientId: own.client.id,
+      projectId: own.project.id,
+      taskId: own.task.id,
+      billable: true,
+    };
+
+    await service.create({
+      ...common,
+      mode: "range",
+      workDate: "2026-09-05",
+      startTime: "09:00",
+      endTime: "10:00",
+      endsNextDay: false,
+      description: "Alpha planning",
+    });
+    await service.create({
+      ...common,
+      mode: "range",
+      workDate: "2026-09-05",
+      startTime: "11:00",
+      endTime: "12:00",
+      endsNextDay: false,
+      description: "Beta build",
+    });
+    await service.create({
+      ...common,
+      mode: "duration",
+      workDate: "2026-09-05",
+      durationSeconds: 1_800,
+      description: "Duration only",
+    });
+    await service.create({
+      ...common,
+      mode: "duration",
+      workDate: "2026-09-04",
+      durationSeconds: 900,
+      description: "Previous day",
+    });
+    await new TimeEntryService(db, OWNER_B).create({
+      mode: "duration",
+      workDate: "2026-09-05",
+      durationSeconds: 7_200,
+      clientId: other.client.id,
+      projectId: other.project.id,
+      taskId: other.task.id,
+      description: "Another owner",
+      billable: true,
+    });
+
+    const firstPage = await service.list({
+      from: "2026-09-04",
+      to: "2026-09-05",
+      page: 1,
+      pageSize: 2,
+      search: "",
+    });
+    expect(firstPage).toMatchObject({
+      page: 1,
+      pageSize: 2,
+      total: 4,
+      totalPages: 2,
+      totalDurationSeconds: 9_900,
+      dailyTotals: [
+        { workDate: "2026-09-05", durationSeconds: 9_000 },
+        { workDate: "2026-09-04", durationSeconds: 900 },
+      ],
+    });
+    expect(firstPage.entries.map((entry) => entry.description)).toEqual([
+      "Beta build",
+      "Alpha planning",
+    ]);
+
+    const secondPage = await service.list({
+      from: "2026-09-04",
+      to: "2026-09-05",
+      page: 2,
+      pageSize: 2,
+      search: "",
+    });
+    expect(secondPage.entries.map((entry) => [entry.workDate, entry.description])).toEqual([
+      ["2026-09-05", "Duration only"],
+      ["2026-09-04", "Previous day"],
+    ]);
+  });
+
+  it("keeps archived hierarchy names visible and combines search with date ranges", async () => {
+    const own = await setupOwner(OWNER_A);
+    const service = new TimeEntryService(db, OWNER_A);
+    const crossMidnight = await service.create({
+      mode: "range",
+      workDate: "2026-09-05",
+      startTime: "23:30",
+      endTime: "01:00",
+      endsNextDay: true,
+      clientId: own.client.id,
+      projectId: own.project.id,
+      taskId: own.task.id,
+      description: "Midnight release",
+      billable: true,
+    });
+    expect(crossMidnight.workDate).toBe("2026-09-05");
+    await new ClientService(db, OWNER_A).setActive(own.client.id, false);
+
+    const archived = await service.list({
+      from: "2026-09-05",
+      to: "2026-09-05",
+      page: 1,
+      pageSize: 25,
+      search: "midnight",
+    });
+    expect(archived.entries).toHaveLength(1);
+    expect(archived.entries[0]).toMatchObject({
+      id: crossMidnight.id,
+      clientName: own.client.name,
+      projectName: own.project.name,
+      taskName: own.task.name,
+      workDate: "2026-09-05",
+      durationSeconds: 5_400,
+    });
+
+    const outsideRange = await service.list({
+      from: "2026-09-06",
+      to: "2026-09-07",
+      page: 1,
+      pageSize: 25,
+      search: "midnight",
+    });
+    expect(outsideRange).toMatchObject({
+      entries: [],
+      dailyTotals: [],
+      total: 0,
+      totalPages: 0,
+      totalDurationSeconds: 0,
+    });
+  });
+});

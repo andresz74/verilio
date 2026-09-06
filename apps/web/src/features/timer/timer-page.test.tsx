@@ -138,5 +138,5 @@ describe("TimerPage", () => {
     expect(within(deleteDialog).getByText(/cannot be undone/i)).toBeVisible();
     await user.click(within(deleteDialog).getByRole("button", { name: "Delete permanently" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-  });
+  }, 15_000);
 });

@@ -1,6 +1,8 @@
 import type {
   ManualTimeEntryInput,
   TimeEntryDto,
+  TimeEntryListQuery,
+  TimeEntryListResponse,
   TimeEntryUpdateInput,
   TimerStartInput,
   TimerStateResponse,
@@ -15,7 +17,7 @@ import {
   resolveRange,
   workDateFromInstant,
 } from "@verilio/domain";
-import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, isNotNull, isNull, lte, sql } from "drizzle-orm";
 
 import { ApiError } from "./errors.js";
 import { LOCAL_USER_ID } from "./settings-service.js";
@@ -32,6 +34,7 @@ export interface TimeEntryServiceContract {
   current(): Promise<TimerStateResponse>;
   start(input: TimerStartInput): Promise<TimerStateResponse>;
   stop(): Promise<TimerStopResponse>;
+  list(input: TimeEntryListQuery): Promise<TimeEntryListResponse>;
   listRecent(limit: number): Promise<TimeEntryDto[]>;
   get(id: string): Promise<TimeEntryDto | null>;
   create(input: ManualTimeEntryInput): Promise<TimeEntryDto>;
@@ -150,6 +153,66 @@ export class TimeEntryService implements TimeEntryServiceContract {
       .orderBy(desc(timeEntries.updatedAt), desc(timeEntries.createdAt))
       .limit(limit);
     return Promise.all(rows.map(({ id }) => this.loadDtoRequired(id)));
+  }
+
+  async list(input: TimeEntryListQuery): Promise<TimeEntryListResponse> {
+    const filters = [
+      eq(timeEntries.userId, this.ownerId),
+      isNotNull(timeEntries.durationSeconds),
+      gte(timeEntries.workDate, input.from),
+      lte(timeEntries.workDate, input.to),
+    ];
+    if (input.search) filters.push(ilike(timeEntries.description, `%${input.search}%`));
+    const where = and(...filters);
+
+    const [rows, totalRows, dailyTotals] = await Promise.all([
+      this.db
+        .select({
+          entry: timeEntries,
+          clientName: clients.name,
+          projectName: projects.name,
+          taskName: tasks.name,
+        })
+        .from(timeEntries)
+        .innerJoin(clients, eq(timeEntries.clientId, clients.id))
+        .innerJoin(projects, eq(timeEntries.projectId, projects.id))
+        .leftJoin(tasks, eq(timeEntries.taskId, tasks.id))
+        .where(where)
+        .orderBy(
+          desc(timeEntries.workDate),
+          sql`${timeEntries.startAt} DESC NULLS LAST`,
+          desc(timeEntries.createdAt),
+          desc(timeEntries.id),
+        )
+        .limit(input.pageSize)
+        .offset((input.page - 1) * input.pageSize),
+      this.db.select({ value: count() }).from(timeEntries).where(where),
+      this.db
+        .select({
+          workDate: timeEntries.workDate,
+          durationSeconds: sql<number>`sum(${timeEntries.durationSeconds})::integer`,
+        })
+        .from(timeEntries)
+        .where(where)
+        .groupBy(timeEntries.workDate)
+        .orderBy(desc(timeEntries.workDate)),
+    ]);
+    const total = totalRows[0]?.value ?? 0;
+
+    return {
+      entries: rows.map((row) =>
+        toDto(row.entry, row.clientName, row.projectName, row.taskName),
+      ),
+      dailyTotals,
+      totalDurationSeconds: dailyTotals.reduce(
+        (sum, day) => sum + day.durationSeconds,
+        0,
+      ),
+      page: input.page,
+      pageSize: input.pageSize,
+      total,
+      totalPages: total === 0 ? 0 : Math.ceil(total / input.pageSize),
+    };
   }
 
   get(id: string): Promise<TimeEntryDto | null> {

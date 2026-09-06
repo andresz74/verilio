@@ -4,6 +4,7 @@ import {
   DateOnlySchema,
   IdSchema,
   NonNegativeDecimalStringSchema,
+  PaginationSchema,
 } from "./foundation.js";
 
 export const TimeEntryModeSchema = z.enum(["timer", "range", "duration"]);
@@ -117,5 +118,32 @@ export type RecentTimeEntriesResponse = z.infer<typeof RecentTimeEntriesResponse
 export const RecentTimeEntriesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(25).default(10),
 });
+
+export const TimeEntryListQuerySchema = PaginationSchema.extend({
+  from: DateOnlySchema,
+  to: DateOnlySchema,
+  search: z.string().trim().max(200).default(""),
+}).refine(({ from, to }) => from <= to, {
+  path: ["to"],
+  message: "End date must be on or after start date",
+});
+export type TimeEntryListQuery = z.infer<typeof TimeEntryListQuerySchema>;
+
+export const TimeEntryDailyTotalSchema = z.object({
+  workDate: DateOnlySchema,
+  durationSeconds: z.number().int().nonnegative(),
+});
+export type TimeEntryDailyTotal = z.infer<typeof TimeEntryDailyTotalSchema>;
+
+export const TimeEntryListResponseSchema = z.object({
+  entries: z.array(TimeEntryDtoSchema),
+  dailyTotals: z.array(TimeEntryDailyTotalSchema),
+  totalDurationSeconds: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  pageSize: z.number().int().positive(),
+  total: z.number().int().nonnegative(),
+  totalPages: z.number().int().nonnegative(),
+});
+export type TimeEntryListResponse = z.infer<typeof TimeEntryListResponseSchema>;
 
 export const TimeEntryIdParamsSchema = z.object({ id: IdSchema });

@@ -2,6 +2,7 @@ import {
   ManualTimeEntryInputSchema,
   RecentTimeEntriesQuerySchema,
   TimeEntryIdParamsSchema,
+  TimeEntryListQuerySchema,
   TimeEntryUpdateInputSchema,
   TimerStartInputSchema,
 } from "@verilio/contracts";
@@ -27,6 +28,11 @@ export function registerTimeEntryRoutes(
   app.get("/api/v1/time-entries/recent", async (request) => {
     const { limit } = parseOrThrow(RecentTimeEntriesQuerySchema.safeParse(request.query));
     return { entries: await service.listRecent(limit) };
+  });
+
+  app.get("/api/v1/time-entries", async (request) => {
+    const input = parseOrThrow(TimeEntryListQuerySchema.safeParse(request.query));
+    return service.list(input);
   });
 
   app.post("/api/v1/time-entries", async (request, reply) => {

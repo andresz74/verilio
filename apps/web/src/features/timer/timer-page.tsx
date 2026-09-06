@@ -22,9 +22,9 @@ import { HierarchySelects } from "../projects/hierarchy-selects.js";
 import { getProjects, projectKeys } from "../projects/project-api.js";
 import { getSettings } from "../settings/settings-api.js";
 import { ElapsedTime } from "./elapsed-time.js";
+import { DeleteTimeEntryDialog } from "./delete-time-entry-dialog.js";
 import {
   TimeEntryApiError,
-  deleteTimeEntry,
   getCurrentTimer,
   getRecentTimeEntries,
   startTimer,
@@ -88,14 +88,6 @@ export function TimerPage() {
     },
   });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteTimeEntry(id),
-    onSuccess: () => {
-      setDeleting(null);
-      void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
-    },
-  });
-
   const timezone = settingsQuery.data?.settings?.timezone ?? "UTC";
   const timer = currentQuery.data?.timer ?? null;
 
@@ -153,9 +145,7 @@ export function TimerPage() {
       {pendingStart ? (
         <Dialog open onOpenChange={(open) => { if (!open) setPendingStart(null); }} title="A timer is already running" description="Keep the current timer, or stop it and start the work you just entered." footer={<><DialogClose asChild><Button variant="secondary">Keep current timer</Button></DialogClose><Button disabled={replaceMutation.isPending} onClick={() => replaceMutation.mutate(pendingStart)}>{replaceMutation.isPending ? "Switching…" : "Stop current and start this one"}</Button></>}><p className="m-0 text-sm text-[var(--color-text-secondary)]">Verilio will save the current entry before attempting the new start. If the second step fails, it will say so explicitly.</p></Dialog>
       ) : null}
-      {deleting ? (
-        <Dialog open onOpenChange={(open) => { if (!open) setDeleting(null); }} title="Delete time entry?" description={`Delete ${formatDuration(deleting.durationSeconds)} — “${deleting.description}”? This cannot be undone.`} footer={<><DialogClose asChild><Button variant="secondary">Cancel</Button></DialogClose><Button variant="danger" disabled={deleteMutation.isPending} onClick={() => deleteMutation.mutate(deleting.id)}>{deleteMutation.isPending ? "Deleting…" : "Delete permanently"}</Button></>}>{deleteMutation.isError ? <InlineError>{deleteMutation.error instanceof Error ? deleteMutation.error.message : "Time entry could not be deleted."}</InlineError> : null}</Dialog>
-      ) : null}
+      {deleting ? <DeleteTimeEntryDialog entry={deleting} onOpenChange={(open) => { if (!open) setDeleting(null); }} /> : null}
     </main>
   );
 }
