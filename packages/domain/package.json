@@ -12,6 +12,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@verilio/contracts": "workspace:^",
     "decimal.js": "^10.6.0"
   },
   "devDependencies": {

@@ -51,6 +51,10 @@ export const ApiErrorCodeSchema = z.enum([
   "FORBIDDEN",
   "INTERNAL_ERROR",
   "DATABASE_UNAVAILABLE",
+  "TIMER_ALREADY_RUNNING",
+  "NO_RUNNING_TIMER",
+  "TIME_ENTRY_NOT_EDITABLE",
+  "SETTINGS_REQUIRED",
 ]);
 
 export const ApiErrorSchema = z.object({
@@ -62,4 +66,3 @@ export const ApiErrorSchema = z.object({
   }),
 });
 export type ApiError = z.infer<typeof ApiErrorSchema>;
-

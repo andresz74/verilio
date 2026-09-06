@@ -15,6 +15,24 @@ export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLIn
   },
 );
 
+export const DateInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
+  function DateInput(props, ref) {
+    return <TextInput ref={ref} type="date" {...props} />;
+  },
+);
+
+export const TimeInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
+  function TimeInput(props, ref) {
+    return <TextInput ref={ref} type="time" {...props} />;
+  },
+);
+
+export const DurationInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
+  function DurationInput(props, ref) {
+    return <TextInput ref={ref} inputMode="text" placeholder="1:30 or 90m" {...props} />;
+  },
+);
+
 export const TextArea = forwardRef<
   HTMLTextAreaElement,
   TextareaHTMLAttributes<HTMLTextAreaElement>

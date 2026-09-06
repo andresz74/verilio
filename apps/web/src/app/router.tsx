@@ -6,6 +6,7 @@ import { ClientsPage } from "../features/clients/clients-page.js";
 import { ProjectDetailPage } from "../features/projects/project-detail-page.js";
 import { ProjectsPage } from "../features/projects/projects-page.js";
 import { SettingsPage } from "../features/settings/settings-page.js";
+import { TimerPage } from "../features/timer/timer-page.js";
 
 export const router = createBrowserRouter([
   {
@@ -15,12 +16,7 @@ export const router = createBrowserRouter([
       { index: true, element: <Navigate replace to="/timer" /> },
       {
         path: "timer",
-        element: (
-          <PlaceholderPage
-            title="Timer"
-            description="Track the work in front of you without losing billing context."
-          />
-        ),
+        element: <TimerPage />,
       },
       {
         path: "timesheet",

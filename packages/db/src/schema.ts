@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  date,
   foreignKey,
   index,
   integer,
@@ -138,6 +139,11 @@ export const projects = pgTable(
       .defaultNow(),
   },
   (table) => [
+    uniqueIndex("projects_id_client_user_unique").on(
+      table.id,
+      table.clientId,
+      table.userId,
+    ),
     foreignKey({
       columns: [table.clientId, table.userId],
       foreignColumns: [clients.id, clients.userId],
@@ -171,5 +177,99 @@ export const tasks = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [index("tasks_project_active_idx").on(table.projectId, table.active)],
+  (table) => [
+    uniqueIndex("tasks_id_project_unique").on(table.id, table.projectId),
+    index("tasks_project_active_idx").on(table.projectId, table.active),
+  ],
+);
+
+export const timeEntries = pgTable(
+  "time_entries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    clientId: uuid("client_id").notNull(),
+    projectId: uuid("project_id").notNull(),
+    taskId: uuid("task_id"),
+    description: text("description").notNull(),
+    mode: varchar("mode", { length: 16 }).notNull(),
+    workDate: date("work_date", { mode: "string" }).notNull(),
+    startAt: timestamp("start_at", { mode: "date", withTimezone: true }),
+    endAt: timestamp("end_at", { mode: "date", withTimezone: true }),
+    durationSeconds: integer("duration_seconds"),
+    billable: boolean("billable").notNull(),
+    hourlyRate: numeric("hourly_rate", { precision: 18, scale: 4 }),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.clientId, table.userId],
+      foreignColumns: [clients.id, clients.userId],
+      name: "time_entries_client_owner_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.projectId, table.clientId, table.userId],
+      foreignColumns: [projects.id, projects.clientId, projects.userId],
+      name: "time_entries_project_hierarchy_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.taskId, table.projectId],
+      foreignColumns: [tasks.id, tasks.projectId],
+      name: "time_entries_task_project_fk",
+    }).onDelete("restrict"),
+    uniqueIndex("time_entries_one_running_timer_per_user")
+      .on(table.userId)
+      .where(sql`${table.mode} = 'timer' AND ${table.endAt} IS NULL`),
+    index("time_entries_user_work_date_idx").on(table.userId, table.workDate),
+    index("time_entries_user_client_work_date_idx").on(
+      table.userId,
+      table.clientId,
+      table.workDate,
+    ),
+    index("time_entries_user_project_work_date_idx").on(
+      table.userId,
+      table.projectId,
+      table.workDate,
+    ),
+    index("time_entries_user_task_work_date_idx").on(
+      table.userId,
+      table.taskId,
+      table.workDate,
+    ),
+    check("time_entries_mode_valid", sql`${table.mode} IN ('timer', 'range', 'duration')`),
+    check(
+      "time_entries_shape_valid",
+      sql`(
+        ${table.mode} = 'timer'
+        AND ${table.startAt} IS NOT NULL
+        AND (
+          (${table.endAt} IS NULL AND ${table.durationSeconds} IS NULL)
+          OR (${table.endAt} IS NOT NULL AND ${table.durationSeconds} > 0)
+        )
+      ) OR (
+        ${table.mode} = 'range'
+        AND ${table.startAt} IS NOT NULL
+        AND ${table.endAt} IS NOT NULL
+        AND ${table.durationSeconds} > 0
+      ) OR (
+        ${table.mode} = 'duration'
+        AND ${table.startAt} IS NULL
+        AND ${table.endAt} IS NULL
+        AND ${table.durationSeconds} > 0
+      )`,
+    ),
+    check(
+      "time_entries_billable_rate_valid",
+      sql`(${table.durationSeconds} IS NULL AND ${table.hourlyRate} IS NULL)
+        OR (${table.billable} AND ${table.hourlyRate} IS NOT NULL AND ${table.hourlyRate} >= 0)
+        OR (NOT ${table.billable} AND ${table.hourlyRate} IS NULL)`,
+    ),
+  ],
 );

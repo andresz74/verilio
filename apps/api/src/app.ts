@@ -14,6 +14,11 @@ import {
 } from "./settings-service.js";
 import { registerTaskRoutes } from "./task-routes.js";
 import { TaskService, type TaskServiceContract } from "./task-service.js";
+import { registerTimeEntryRoutes } from "./time-entry-routes.js";
+import {
+  TimeEntryService,
+  type TimeEntryServiceContract,
+} from "./time-entry-service.js";
 
 export type BuildAppOptions = {
   db: VerilioDatabase;
@@ -23,6 +28,7 @@ export type BuildAppOptions = {
   projectService?: ProjectServiceContract;
   settingsService?: SettingsServiceContract;
   taskService?: TaskServiceContract;
+  timeEntryService?: TimeEntryServiceContract;
 };
 
 export function buildApp({
@@ -33,6 +39,7 @@ export function buildApp({
   projectService = new ProjectService(db),
   settingsService = new SettingsService(db),
   taskService = new TaskService(db),
+  timeEntryService = new TimeEntryService(db),
 }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger,
@@ -62,6 +69,7 @@ export function buildApp({
   registerClientRoutes(app, clientService);
   registerProjectRoutes(app, projectService);
   registerTaskRoutes(app, taskService);
+  registerTimeEntryRoutes(app, timeEntryService);
 
   app.setNotFoundHandler((request, reply) =>
     reply.status(404).send({

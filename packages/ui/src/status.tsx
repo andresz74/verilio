@@ -1,4 +1,4 @@
-import type { HTMLAttributes } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 
 export type StatusBadgeProps = HTMLAttributes<HTMLSpanElement> & {
   tone?: "neutral" | "accent" | "success" | "warning" | "danger" | "info";
@@ -38,3 +38,22 @@ export function Spinner({ label = "Loading" }: { label?: string }) {
   );
 }
 
+export function EmptyState({
+  action,
+  description,
+  title,
+}: {
+  action?: ReactNode;
+  description: string;
+  title: string;
+}) {
+  return (
+    <div className="py-5 text-center">
+      <h3 className="m-0 text-sm font-semibold text-[var(--color-text-primary)]">{title}</h3>
+      <p className="mx-auto mb-0 mt-1 max-w-md text-sm text-[var(--color-text-secondary)]">
+        {description}
+      </p>
+      {action ? <div className="mt-4">{action}</div> : null}
+    </div>
+  );
+}

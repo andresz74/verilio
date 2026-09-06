@@ -11,8 +11,17 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react";
+import { Button, InlineError } from "@verilio/ui";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
+
+import { ElapsedTime } from "../features/timer/elapsed-time.js";
+import {
+  getCurrentTimer,
+  stopTimer,
+  timerKeys,
+} from "../features/timer/time-entry-api.js";
 
 type NavigationItem = {
   icon: LucideIcon;
@@ -34,7 +43,13 @@ const navigationGroups: NavigationItem[][] = [
   [{ icon: Settings, label: "Settings", to: "/settings" }],
 ];
 
-export function AppNavigation({ onNavigate }: { onNavigate?: (() => void) | undefined }) {
+export function AppNavigation({
+  onNavigate,
+  timerIndicator,
+}: {
+  onNavigate?: (() => void) | undefined;
+  timerIndicator?: ReactNode;
+}) {
   return (
     <nav aria-label="Primary" className="flex min-h-0 flex-1 flex-col">
       <div className="flex-1 space-y-5 overflow-y-auto px-3 py-4">
@@ -62,17 +77,45 @@ export function AppNavigation({ onNavigate }: { onNavigate?: (() => void) | unde
       </div>
 
       <div className="border-t border-[var(--color-border-default)] p-4">
-        <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] px-3 py-3">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-            <Clock3 aria-hidden="true" size={14} />
-            Timer
-          </div>
-          <p className="mb-0 mt-2 text-sm font-medium text-[var(--color-text-secondary)]">
-            No timer running
-          </p>
-        </div>
+        {timerIndicator ?? <IdleTimerIndicator />}
       </div>
     </nav>
+  );
+}
+
+function IdleTimerIndicator() {
+  return (
+    <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] px-3 py-3">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-text-muted)]"><Clock3 aria-hidden="true" size={14} /> Timer</div>
+      <p className="mb-0 mt-2 text-sm font-medium text-[var(--color-text-secondary)]">No timer running</p>
+    </div>
+  );
+}
+
+function RunningTimerIndicator({ onNavigate }: { onNavigate?: (() => void) | undefined }) {
+  const queryClient = useQueryClient();
+  const currentQuery = useQuery({ queryKey: timerKeys.current, queryFn: getCurrentTimer });
+  const stopMutation = useMutation({
+    mutationFn: stopTimer,
+    onSuccess: (response) => {
+      queryClient.setQueryData(timerKeys.current, { timer: null, serverNow: response.serverNow });
+      void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
+    },
+  });
+  const timer = currentQuery.data?.timer;
+  if (!timer || !currentQuery.data) {
+    return <IdleTimerIndicator />;
+  }
+  return (
+    <div className="rounded-[var(--radius-md)] border border-[var(--color-accent-default)] bg-[var(--color-accent-subtle)] px-3 py-3">
+      <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-[var(--color-accent-active)]"><Clock3 aria-hidden="true" size={14} /> Running</div>
+      <NavLink to="/timer" onClick={onNavigate} className="mt-2 block truncate text-sm font-semibold text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-border-focus)]">{timer.description || "Untitled work"}</NavLink>
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className="text-sm font-semibold tabular-nums"><ElapsedTime startAt={timer.startAt ?? currentQuery.data.serverNow} serverNow={currentQuery.data.serverNow} /></span>
+        <Button size="sm" variant="secondary" disabled={stopMutation.isPending} onClick={() => stopMutation.mutate()}>Stop</Button>
+      </div>
+      {stopMutation.isError ? <div className="mt-2"><InlineError>Stop failed. Timer is still running.</InlineError></div> : null}
+    </div>
   );
 }
 
@@ -83,7 +126,7 @@ export function AppShell() {
     <div className="min-h-screen bg-[var(--color-bg-canvas)] lg:grid lg:grid-cols-[232px_minmax(0,1fr)]">
       <aside className="hidden h-screen border-r border-[var(--color-border-default)] bg-[var(--color-bg-surface)] lg:sticky lg:top-0 lg:flex lg:flex-col">
         <Brand />
-        <AppNavigation />
+        <AppNavigation timerIndicator={<RunningTimerIndicator />} />
       </aside>
 
       <div className="min-w-0">
@@ -106,7 +149,12 @@ export function AppShell() {
 
         {mobileNavigationOpen ? (
           <div className="fixed inset-x-0 bottom-0 top-16 z-20 flex flex-col border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface)] lg:hidden">
-            <AppNavigation onNavigate={() => setMobileNavigationOpen(false)} />
+            <AppNavigation
+              onNavigate={() => setMobileNavigationOpen(false)}
+              timerIndicator={
+                <RunningTimerIndicator onNavigate={() => setMobileNavigationOpen(false)} />
+              }
+            />
           </div>
         ) : null}
 

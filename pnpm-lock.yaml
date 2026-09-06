@@ -41,6 +41,9 @@ importers:
       '@verilio/db':
         specifier: workspace:^
         version: link:../../packages/db
+      '@verilio/domain':
+        specifier: workspace:^
+        version: link:../../packages/domain
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -90,6 +93,9 @@ importers:
       react-router-dom:
         specifier: ^7.18.3
         version: 7.18.3(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      zod:
+        specifier: ^4.5.4
+        version: 4.5.4
     devDependencies:
       '@tailwindcss/vite':
         specifier: ^4.3.3
@@ -154,6 +160,9 @@ importers:
 
   packages/domain:
     dependencies:
+      '@verilio/contracts':
+        specifier: workspace:^
+        version: link:../contracts
       decimal.js:
         specifier: ^10.6.0
         version: 10.6.0

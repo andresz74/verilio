@@ -5,7 +5,7 @@ test("navigates the required M1 shell and exposes the active section", async ({ 
 
   await expect(page).toHaveTitle("Verilio");
   await expect(page).toHaveURL(/\/timer$/);
-  await expect(page.getByRole("heading", { name: "Timer" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Timer", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Timer" })).toHaveAttribute(
     "aria-current",
     "page",

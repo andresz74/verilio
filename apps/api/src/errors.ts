@@ -7,7 +7,11 @@ export class ApiError extends Error {
       | "CONFLICT"
       | "FORBIDDEN"
       | "INTERNAL_ERROR"
-      | "DATABASE_UNAVAILABLE",
+      | "DATABASE_UNAVAILABLE"
+      | "TIMER_ALREADY_RUNNING"
+      | "NO_RUNNING_TIMER"
+      | "TIME_ENTRY_NOT_EDITABLE"
+      | "SETTINGS_REQUIRED",
     message: string,
     readonly fieldErrors: Record<string, string[]> | null = null,
   ) {
@@ -15,4 +19,3 @@ export class ApiError extends Error {
     this.name = "ApiError";
   }
 }
-
