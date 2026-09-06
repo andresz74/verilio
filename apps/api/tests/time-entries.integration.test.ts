@@ -91,7 +91,7 @@ describe("M4 timer persistence and concurrency", () => {
       description: "Late deployment",
       billable: true,
     });
-    expect(started.timer).toMatchObject({ workDate: "2026-09-05", hourlyRate: null, durationSeconds: null });
+    expect(started.timer).toMatchObject({ workDate: "2026-09-05", hourlyRate: null, currency: null, durationSeconds: null });
     expect((await starter.current()).timer?.id).toBe(started.timer?.id);
 
     const stoppedAt = new Date("2026-09-06T05:00:00.000Z");
@@ -100,12 +100,16 @@ describe("M4 timer persistence and concurrency", () => {
       id: started.timer?.id,
       durationSeconds: 5_400,
       hourlyRate: "110.0000",
+      currency: "USD",
       workDate: "2026-09-05",
     });
     expect((await starter.current()).timer).toBeNull();
 
     await new ProjectService(db, OWNER_A).update(project.id, projectInput(client.id, project.name, "175.0000"));
-    expect((await starter.get(stopped.entry.id))?.hourlyRate).toBe("110.0000");
+    expect(await starter.get(stopped.entry.id)).toMatchObject({
+      hourlyRate: "110.0000",
+      currency: "USD",
+    });
     await expect(starter.stop()).rejects.toMatchObject({ code: "NO_RUNNING_TIMER" });
   });
 
@@ -138,7 +142,7 @@ describe("M4 manual entries and historical edits", () => {
       description: "Cross-midnight support",
       billable: true,
     });
-    expect(range).toMatchObject({ durationSeconds: 5_400, workDate: "2026-09-05", hourlyRate: "110.0000" });
+    expect(range).toMatchObject({ durationSeconds: 5_400, workDate: "2026-09-05", hourlyRate: "110.0000", currency: "USD" });
 
     const duration = await service.create({
       mode: "duration",
@@ -150,7 +154,7 @@ describe("M4 manual entries and historical edits", () => {
       description: "Duration only",
       billable: false,
     });
-    expect(duration).toMatchObject({ startAt: null, endAt: null, hourlyRate: null, durationSeconds: 3_600 });
+    expect(duration).toMatchObject({ startAt: null, endAt: null, hourlyRate: null, currency: null, durationSeconds: 3_600 });
 
     const secondProject = await new ProjectService(db, OWNER_A).create(projectInput(client.id, "New rate", "200.0000"));
     const edited = await service.update(range.id, {
@@ -165,7 +169,7 @@ describe("M4 manual entries and historical edits", () => {
       description: "Edited without repricing",
       billable: true,
     });
-    expect(edited).toMatchObject({ durationSeconds: 9_000, hourlyRate: "110.0000", projectId: secondProject.id });
+    expect(edited).toMatchObject({ durationSeconds: 9_000, hourlyRate: "110.0000", currency: "USD", projectId: secondProject.id });
 
     const becameBillable = await service.update(duration.id, {
       mode: "duration",
@@ -177,7 +181,7 @@ describe("M4 manual entries and historical edits", () => {
       description: duration.description,
       billable: true,
     });
-    expect(becameBillable?.hourlyRate).toBe("200.0000");
+    expect(becameBillable).toMatchObject({ hourlyRate: "200.0000", currency: "USD" });
     expect(await service.delete(duration.id)).toBe(true);
     expect(await service.get(duration.id)).toBeNull();
   });

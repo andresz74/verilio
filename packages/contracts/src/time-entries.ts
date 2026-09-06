@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import {
+  CurrencyCodeSchema,
   DateOnlySchema,
   IdSchema,
   NonNegativeDecimalStringSchema,
@@ -90,6 +91,7 @@ export const TimeEntryDtoSchema = z.object({
   durationSeconds: z.number().int().positive().nullable(),
   billable: z.boolean(),
   hourlyRate: NonNegativeDecimalStringSchema.nullable(),
+  currency: CurrencyCodeSchema.nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });

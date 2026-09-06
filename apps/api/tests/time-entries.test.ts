@@ -35,6 +35,7 @@ const entry: TimeEntryDto = {
   durationSeconds: null,
   billable: true,
   hourlyRate: null,
+  currency: null,
   createdAt: "2026-09-05T14:00:00.000Z",
   updatedAt: "2026-09-05T14:00:00.000Z",
 };
@@ -43,7 +44,7 @@ function service(): TimeEntryServiceContract {
   return {
     current: vi.fn().mockResolvedValue({ timer: entry, serverNow: "2026-09-05T14:00:10.000Z" }),
     start: vi.fn().mockResolvedValue({ timer: entry, serverNow: "2026-09-05T14:00:00.000Z" }),
-    stop: vi.fn().mockResolvedValue({ entry: { ...entry, endAt: "2026-09-05T14:01:00.000Z", durationSeconds: 60, hourlyRate: "100.0000" }, serverNow: "2026-09-05T14:01:00.000Z" }),
+    stop: vi.fn().mockResolvedValue({ entry: { ...entry, endAt: "2026-09-05T14:01:00.000Z", durationSeconds: 60, hourlyRate: "100.0000", currency: "USD" }, serverNow: "2026-09-05T14:01:00.000Z" }),
     list: vi.fn().mockResolvedValue({ entries: [], dailyTotals: [], totalDurationSeconds: 0, page: 1, pageSize: 25, total: 0, totalPages: 0 }),
     listRecent: vi.fn().mockResolvedValue([]),
     get: vi.fn().mockResolvedValue(entry),

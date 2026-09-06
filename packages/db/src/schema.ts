@@ -201,6 +201,7 @@ export const timeEntries = pgTable(
     durationSeconds: integer("duration_seconds"),
     billable: boolean("billable").notNull(),
     hourlyRate: numeric("hourly_rate", { precision: 18, scale: 4 }),
+    currency: varchar("currency", { length: 3 }),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -267,9 +268,9 @@ export const timeEntries = pgTable(
     ),
     check(
       "time_entries_billable_rate_valid",
-      sql`(${table.durationSeconds} IS NULL AND ${table.hourlyRate} IS NULL)
-        OR (${table.billable} AND ${table.hourlyRate} IS NOT NULL AND ${table.hourlyRate} >= 0)
-        OR (NOT ${table.billable} AND ${table.hourlyRate} IS NULL)`,
+      sql`(${table.durationSeconds} IS NULL AND ${table.hourlyRate} IS NULL AND ${table.currency} IS NULL)
+        OR (${table.billable} AND ${table.hourlyRate} IS NOT NULL AND ${table.hourlyRate} >= 0 AND ${table.currency} IS NOT NULL)
+        OR (NOT ${table.billable} AND ${table.hourlyRate} IS NULL AND ${table.currency} IS NULL)`,
     ),
   ],
 );

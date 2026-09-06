@@ -6,12 +6,13 @@ import { getTasks, taskKeys } from "./task-api.js";
 
 export type TaskSelectProps = Omit<SelectHTMLAttributes<HTMLSelectElement>, "children"> & {
   includeArchived?: boolean;
+  placeholder?: string;
   projectId?: string | null;
 };
 
 export const TaskSelect = forwardRef<HTMLSelectElement, TaskSelectProps>(
   function TaskSelect(
-    { disabled, includeArchived = false, projectId, ...props },
+    { disabled, includeArchived = false, placeholder = "No task", projectId, ...props },
     ref,
   ) {
     const query = {
@@ -36,7 +37,7 @@ export const TaskSelect = forwardRef<HTMLSelectElement, TaskSelectProps>(
           ? "Tasks unavailable"
           : tasks.length === 0
             ? "No active tasks"
-            : "No task";
+            : placeholder;
 
     return (
       <Select

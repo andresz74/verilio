@@ -4,6 +4,7 @@ import {
   assertDateOnly,
   assertPositiveDurationSeconds,
   calculateDurationSeconds,
+  calculateHistoricalTimeAmount,
   calculateTimeValue,
   getCurrencyFractionDigits,
   isDateOnly,
@@ -50,5 +51,34 @@ describe("decimal-safe money", () => {
     expect(getCurrencyFractionDigits("JPY")).toBe(0);
     expect(roundMoney("10.005", "USD")).toBe("10.01");
   });
-});
 
+  it("calculates historical time amounts and excludes non-billable time", () => {
+    expect(
+      calculateHistoricalTimeAmount({
+        billable: true,
+        currency: "USD",
+        durationSeconds: 5_400,
+        hourlyRate: "85.0000",
+      }),
+    ).toBe("127.50");
+    expect(
+      calculateHistoricalTimeAmount({
+        billable: false,
+        currency: null,
+        durationSeconds: 5_400,
+        hourlyRate: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("rejects incomplete billable snapshots", () => {
+    expect(() =>
+      calculateHistoricalTimeAmount({
+        billable: true,
+        currency: null,
+        durationSeconds: 3_600,
+        hourlyRate: "85.0000",
+      }),
+    ).toThrow("historical rate and currency");
+  });
+});

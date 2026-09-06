@@ -7,6 +7,8 @@ import { ClientService, type ClientServiceContract } from "./client-service.js";
 import { ApiError } from "./errors.js";
 import { registerProjectRoutes } from "./project-routes.js";
 import { ProjectService, type ProjectServiceContract } from "./project-service.js";
+import { registerReportRoutes } from "./report-routes.js";
+import { ReportService, type ReportServiceContract } from "./report-service.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
 import {
   SettingsService,
@@ -26,6 +28,7 @@ export type BuildAppOptions = {
   readinessCheck?: (db: VerilioDatabase) => Promise<void>;
   clientService?: ClientServiceContract;
   projectService?: ProjectServiceContract;
+  reportService?: ReportServiceContract;
   settingsService?: SettingsServiceContract;
   taskService?: TaskServiceContract;
   timeEntryService?: TimeEntryServiceContract;
@@ -37,6 +40,7 @@ export function buildApp({
   readinessCheck = checkDatabaseConnection,
   clientService = new ClientService(db),
   projectService = new ProjectService(db),
+  reportService = new ReportService(db),
   settingsService = new SettingsService(db),
   taskService = new TaskService(db),
   timeEntryService = new TimeEntryService(db),
@@ -68,6 +72,7 @@ export function buildApp({
   registerSettingsRoutes(app, settingsService);
   registerClientRoutes(app, clientService);
   registerProjectRoutes(app, projectService);
+  registerReportRoutes(app, reportService);
   registerTaskRoutes(app, taskService);
   registerTimeEntryRoutes(app, timeEntryService);
 

@@ -25,6 +25,7 @@ import { LOCAL_USER_ID } from "./settings-service.js";
 type TimeEntryRow = typeof timeEntries.$inferSelect;
 type TimeContext = {
   clientRate: string | null;
+  currency: string;
   projectRate: string | null;
   businessRate: string;
   timezone: string;
@@ -89,6 +90,7 @@ export class TimeEntryService implements TimeEntryServiceContract {
           durationSeconds: null,
           billable: input.billable,
           hourlyRate: null,
+          currency: null,
         })
         .returning({ id: timeEntries.id });
       if (!row) throw new Error("Timer insert returned no record");
@@ -128,7 +130,13 @@ export class TimeEntryService implements TimeEntryServiceContract {
     });
     const [updated] = await this.db
       .update(timeEntries)
-      .set({ endAt: serverNow, durationSeconds, hourlyRate, updatedAt: serverNow })
+      .set({
+        endAt: serverNow,
+        durationSeconds,
+        hourlyRate,
+        currency: running.billable ? context.currency : null,
+        updatedAt: serverNow,
+      })
       .where(
         and(
           eq(timeEntries.id, running.id),
@@ -240,6 +248,7 @@ export class TimeEntryService implements TimeEntryServiceContract {
         ...timing,
         billable: input.billable,
         hourlyRate,
+        currency: input.billable ? context.currency : null,
       })
       .returning({ id: timeEntries.id });
     if (!row) throw new Error("Time entry insert returned no record");
@@ -270,6 +279,12 @@ export class TimeEntryService implements TimeEntryServiceContract {
             clientRate: context.clientRate,
             businessRate: context.businessRate,
           });
+    const currency =
+      existing.billable && input.billable
+        ? existing.currency
+        : input.billable
+          ? context.currency
+          : null;
     const [row] = await this.db
       .update(timeEntries)
       .set({
@@ -280,6 +295,7 @@ export class TimeEntryService implements TimeEntryServiceContract {
         ...timing,
         billable: input.billable,
         hourlyRate,
+        currency,
         updatedAt: this.clock(),
       })
       .where(and(eq(timeEntries.id, id), eq(timeEntries.userId, this.ownerId)))
@@ -341,7 +357,11 @@ export class TimeEntryService implements TimeEntryServiceContract {
       throw new ApiError(409, "SETTINGS_REQUIRED", "Complete Business settings before tracking time.");
     }
     const [client] = await this.db
-      .select({ rate: clients.defaultHourlyRate, active: clients.active })
+      .select({
+        rate: clients.defaultHourlyRate,
+        active: clients.active,
+        currency: clients.currency,
+      })
       .from(clients)
       .where(and(eq(clients.id, input.clientId), eq(clients.userId, this.ownerId)))
       .limit(1);
@@ -374,6 +394,7 @@ export class TimeEntryService implements TimeEntryServiceContract {
     }
     return {
       clientRate: client.rate,
+      currency: client.currency,
       projectRate: project.rate,
       businessRate: profile.businessRate,
       timezone: profile.timezone,
@@ -435,6 +456,7 @@ function toDto(
     durationSeconds: row.durationSeconds,
     billable: row.billable,
     hourlyRate: row.hourlyRate,
+    currency: row.currency,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

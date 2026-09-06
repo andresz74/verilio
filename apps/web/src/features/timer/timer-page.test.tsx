@@ -28,6 +28,7 @@ const running = {
   durationSeconds: null,
   billable: true,
   hourlyRate: null,
+  currency: null,
   createdAt: "2026-09-05T13:59:00.000Z",
   updatedAt: "2026-09-05T13:59:00.000Z",
 };
@@ -93,9 +94,9 @@ describe("TimerPage", () => {
       http.post("/api/v1/time-entries", async ({ request }) => {
         const body = await request.json();
         createdBodies.push(body);
-        return HttpResponse.json({ entry: { ...running, ...(body as object), id: entryId, mode: (body as { mode: string }).mode, endAt: "2026-09-05T15:00:00.000Z", durationSeconds: 3600, hourlyRate: "100.0000" } }, { status: 201 });
+        return HttpResponse.json({ entry: { ...running, ...(body as object), id: entryId, mode: (body as { mode: string }).mode, endAt: "2026-09-05T15:00:00.000Z", durationSeconds: 3600, hourlyRate: "100.0000", currency: "USD" } }, { status: 201 });
       }),
-      http.get("/api/v1/time-entries/recent", () => HttpResponse.json({ entries: [{ ...running, endAt: "2026-09-05T15:00:00.000Z", durationSeconds: 3600, hourlyRate: "100.0000" }] })),
+      http.get("/api/v1/time-entries/recent", () => HttpResponse.json({ entries: [{ ...running, endAt: "2026-09-05T15:00:00.000Z", durationSeconds: 3600, hourlyRate: "100.0000", currency: "USD" }] })),
       http.patch(`/api/v1/time-entries/${entryId}`, () => HttpResponse.json({ error: { code: "INTERNAL_ERROR", message: "Save failed", fieldErrors: null, requestId: "test" } }, { status: 500 })),
       http.delete(`/api/v1/time-entries/${entryId}`, () => new HttpResponse(null, { status: 204 })),
     );

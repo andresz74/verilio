@@ -1102,6 +1102,7 @@ type TimeEntry = {
 
   billable: boolean;
   hourlyRate: Decimal | null;
+  currency: CurrencyCode | null;
 
   createdAt: Instant;
   updatedAt: Instant;
@@ -1133,6 +1134,10 @@ startAt/endAt may be null
 ```
 
 `workDate` is required for all modes.
+
+Completed billable entries snapshot both the resolved hourly rate and the Client currency.
+Reports use these stored historical values rather than mutable current Client or Project data.
+Non-billable entries store `null` for both fields.
 
 ---
 
@@ -1324,6 +1329,11 @@ PEN
 Each invoice has exactly one currency.
 
 Clients supply the default invoice currency.
+
+Completed billable Time Entries snapshot the Client currency alongside their historical hourly
+rate. The migration introducing this field uses the currently associated Client currency as a
+one-time best-effort backfill for existing completed billable entries because earlier currency
+history cannot be reconstructed.
 
 No automatic currency conversion exists in MVP.
 

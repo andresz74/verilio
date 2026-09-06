@@ -30,6 +30,7 @@ const rangeEntry = {
   durationSeconds: 5_400,
   billable: true,
   hourlyRate: "100.0000",
+  currency: "USD",
   createdAt: "2026-09-06T05:00:00.000Z",
   updatedAt: "2026-09-06T05:00:00.000Z",
 };
@@ -44,6 +45,7 @@ const durationEntry = {
   durationSeconds: 3_600,
   billable: false,
   hourlyRate: null,
+  currency: null,
 };
 
 function baseHandlers() {

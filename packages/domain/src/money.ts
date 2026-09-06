@@ -30,3 +30,19 @@ export function calculateTimeValue(
 
   return new Decimal(hourlyRate).mul(durationSeconds).div(3_600);
 }
+
+export function calculateHistoricalTimeAmount(input: {
+  billable: boolean;
+  currency: string | null;
+  durationSeconds: number;
+  hourlyRate: DecimalInput | null;
+}): string | null {
+  if (!input.billable) return null;
+  if (input.hourlyRate === null || input.currency === null) {
+    throw new RangeError("Billable time requires historical rate and currency snapshots");
+  }
+  return roundMoney(
+    calculateTimeValue(input.durationSeconds, input.hourlyRate),
+    input.currency,
+  );
+}

@@ -36,6 +36,13 @@
       "when": 1788659991890,
       "tag": "0004_awesome_famine",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788735146389,
+      "tag": "0005_low_katie_power",
+      "breakpoints": true
     }
   ]
 }
