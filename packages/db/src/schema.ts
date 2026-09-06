@@ -1,6 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
+  index,
   integer,
   numeric,
   pgTable,
@@ -67,6 +69,43 @@ export const businessProfiles = pgTable(
     check(
       "business_profiles_tax_rate_range",
       sql`${table.defaultTaxRate} >= 0 AND ${table.defaultTaxRate} <= 100`,
+    ),
+  ],
+);
+
+export const clients = pgTable(
+  "clients",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    email: text("email"),
+    ccRecipients: text("cc_recipients")
+      .array()
+      .notNull()
+      .default(sql`ARRAY[]::text[]`),
+    address: text("address"),
+    note: text("note"),
+    currency: varchar("currency", { length: 3 }).notNull(),
+    defaultHourlyRate: numeric("default_hourly_rate", {
+      precision: 18,
+      scale: 4,
+    }),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("clients_user_active_idx").on(table.userId, table.active),
+    check(
+      "clients_default_hourly_rate_nonnegative",
+      sql`${table.defaultHourlyRate} IS NULL OR ${table.defaultHourlyRate} >= 0`,
     ),
   ],
 );

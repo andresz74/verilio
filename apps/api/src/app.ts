@@ -2,6 +2,8 @@ import type { VerilioDatabase } from "@verilio/db";
 import { checkDatabaseConnection } from "@verilio/db";
 import Fastify, { type FastifyInstance } from "fastify";
 
+import { registerClientRoutes } from "./client-routes.js";
+import { ClientService, type ClientServiceContract } from "./client-service.js";
 import { ApiError } from "./errors.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
 import {
@@ -13,6 +15,7 @@ export type BuildAppOptions = {
   db: VerilioDatabase;
   logger?: boolean;
   readinessCheck?: (db: VerilioDatabase) => Promise<void>;
+  clientService?: ClientServiceContract;
   settingsService?: SettingsServiceContract;
 };
 
@@ -20,6 +23,7 @@ export function buildApp({
   db,
   logger = true,
   readinessCheck = checkDatabaseConnection,
+  clientService = new ClientService(db),
   settingsService = new SettingsService(db),
 }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
@@ -47,6 +51,7 @@ export function buildApp({
   });
 
   registerSettingsRoutes(app, settingsService);
+  registerClientRoutes(app, clientService);
 
   app.setNotFoundHandler((request, reply) =>
     reply.status(404).send({

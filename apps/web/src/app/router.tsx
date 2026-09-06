@@ -2,6 +2,7 @@ import { Navigate, createBrowserRouter } from "react-router-dom";
 
 import { AppShell } from "./app-shell.js";
 import { PlaceholderPage } from "./placeholder-page.js";
+import { ClientsPage } from "../features/clients/clients-page.js";
 import { SettingsPage } from "../features/settings/settings-page.js";
 
 export const router = createBrowserRouter([
@@ -39,12 +40,7 @@ export const router = createBrowserRouter([
       },
       {
         path: "clients",
-        element: (
-          <PlaceholderPage
-            title="Clients"
-            description="Manage the people and businesses you work for."
-          />
-        ),
+        element: <ClientsPage />,
       },
       {
         path: "projects",

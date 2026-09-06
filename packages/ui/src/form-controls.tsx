@@ -2,6 +2,7 @@ import {
   forwardRef,
   type InputHTMLAttributes,
   type ReactNode,
+  type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
 
@@ -27,6 +28,12 @@ export const TextArea = forwardRef<
     />
   );
 });
+
+export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSelectElement>>(
+  function Select({ className = "", ...props }, ref) {
+    return <select ref={ref} className={`${controlClass} ${className}`} {...props} />;
+  },
+);
 
 export type FieldProps = {
   children: ReactNode;
@@ -77,4 +84,3 @@ export function InlineError({ children }: { children: ReactNode }) {
     </div>
   );
 }
-
