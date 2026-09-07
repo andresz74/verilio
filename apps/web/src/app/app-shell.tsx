@@ -132,6 +132,7 @@ export function AppShell() {
       <div className="min-w-0">
         <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-[var(--color-border-default)] bg-[var(--color-bg-surface-translucent)] px-4 backdrop-blur lg:hidden">
           <Brand compact />
+          <MobileRunningTimerIndicator />
           <button
             type="button"
             aria-expanded={mobileNavigationOpen}
@@ -161,6 +162,35 @@ export function AppShell() {
         <Outlet />
       </div>
     </div>
+  );
+}
+
+function MobileRunningTimerIndicator() {
+  const currentQuery = useQuery({
+    queryKey: timerKeys.current,
+    queryFn: getCurrentTimer,
+  });
+  const timer = currentQuery.data?.timer;
+
+  if (!timer || !currentQuery.data) return null;
+
+  return (
+    <NavLink
+      aria-label={`Running timer: ${timer.description || "Untitled work"}`}
+      className="mx-3 flex min-w-0 flex-1 items-center justify-center gap-2 rounded-[var(--radius-md)] bg-[var(--color-accent-subtle)] px-2 py-1.5 text-xs font-semibold text-[var(--color-accent-active)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-border-focus)]"
+      to="/timer"
+    >
+      <Clock3 aria-hidden="true" className="shrink-0" size={14} />
+      <span className="max-w-28 truncate sm:max-w-48">
+        {timer.description || "Untitled work"}
+      </span>
+      <span className="shrink-0 tabular-nums">
+        <ElapsedTime
+          startAt={timer.startAt ?? currentQuery.data.serverNow}
+          serverNow={currentQuery.data.serverNow}
+        />
+      </span>
+    </NavLink>
   );
 }
 

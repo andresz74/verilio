@@ -229,6 +229,92 @@ describe("M7 manual Items and authoritative totals", () => {
 });
 
 describe("M8 Invoice PDF and lifecycle", () => {
+  it("keeps the complete historical rate chain stable through Report, import, and PDF", async () => {
+    const own = await setupOwner(OWNER_A);
+    await new ClientService(db, OWNER_A).update(
+      own.client.id,
+      clientInput("M7 Client", "USD"),
+    );
+    await db
+      .update(clients)
+      .set({ defaultHourlyRate: "80.0000" })
+      .where(eq(clients.id, own.client.id));
+    await new ProjectService(db, OWNER_A).update(
+      own.project.id,
+      projectInput(own.client.id, "85.0000"),
+    );
+
+    const timeService = new TimeEntryService(db, OWNER_A);
+    const historical = await timeService.create({
+      mode: "duration",
+      workDate: "2026-09-05",
+      durationSeconds: 3_600,
+      clientId: own.client.id,
+      projectId: own.project.id,
+      taskId: own.task.id,
+      description: "Historical chain",
+      billable: true,
+    });
+    expect(historical).toMatchObject({
+      hourlyRate: "85.0000",
+      currency: "USD",
+    });
+
+    await new ProjectService(db, OWNER_A).update(
+      own.project.id,
+      projectInput(own.client.id, "125.0000"),
+    );
+    await db
+      .update(clients)
+      .set({ defaultHourlyRate: "140.0000" })
+      .where(eq(clients.id, own.client.id));
+    await db
+      .update(businessProfiles)
+      .set({ defaultHourlyRate: "160.0000" })
+      .where(eq(businessProfiles.userId, OWNER_A));
+
+    const report = await new ReportService(db, OWNER_A).detailed({
+      from: "2026-09-05",
+      to: "2026-09-05",
+      billable: "billable",
+      invoiceStatus: "not-invoiced",
+      page: 1,
+      pageSize: 25,
+    });
+    expect(report.entries[0]).toMatchObject({
+      id: historical.id,
+      hourlyRate: "85.0000",
+      currency: "USD",
+      amount: "85.00",
+    });
+
+    const service = new InvoiceService(db, OWNER_A);
+    const invoice = await service.create(draftInput(own.client.id));
+    const imported = await service.importTime(invoice.id, {
+      from: "2026-09-05",
+      to: "2026-09-05",
+      timeEntryIds: [historical.id],
+      grouping: "project",
+    });
+    expect(imported?.items[0]).toMatchObject({
+      unitPrice: "85.0000",
+      amount: "85.0000",
+      sources: [
+        expect.objectContaining({
+          id: historical.id,
+          hourlyRate: "85.0000",
+          currency: "USD",
+          amount: "85.00",
+        }),
+      ],
+    });
+    expect(await service.presentation(invoice.id)).toMatchObject({
+      currency: "USD",
+      items: [expect.objectContaining({ unitPrice: "85.0000", amount: "85.0000" })],
+      total: "85.00",
+    });
+  });
+
   it("builds deterministic saved presentation data and a real PDF after live records change", async () => {
     const own = await setupOwner(OWNER_A);
     const service = new InvoiceService(db, OWNER_A, () => new Date("2026-09-06T16:00:00.000Z"));

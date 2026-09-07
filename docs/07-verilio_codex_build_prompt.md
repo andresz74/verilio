@@ -55,7 +55,7 @@ Use them for different purposes:
 |---|---|
 | `01` | Product vision, scope, core workflows, non-goals |
 | `02` | P0/P1/P2 requirements, business rules, edge cases |
-| `03` | User flows, interaction behavior, provisional UX decisions |
+| `03` | User flows, interaction behavior, approved MVP UX decisions |
 | `04` | Visual system, components, accessibility, UI behavior |
 | `05` | Approved technical architecture and ADRs |
 | `06` | Milestones, slices, acceptance gates, execution sequence |
@@ -648,12 +648,16 @@ Explicit entry rate
 When a billable entry is finalized:
 
 ```text
-persist resolved hourly rate on the time entry
+persist resolved hourly rate and Client currency on the time entry
 ```
 
-Reports must use the stored historical rate.
+Reports must use the stored historical rate and currency.
 
-Never recalculate old time using the current project/client/business rate.
+Never recalculate old time using the current project/client/business rate or Client currency.
+
+The migration that introduced the currency snapshot backfilled existing completed billable
+entries from their then-current Client as a one-time best effort; earlier currency history cannot
+be reconstructed. Non-billable entries keep both historical rate and currency null.
 
 ---
 
@@ -672,6 +676,10 @@ decimal-safe TypeScript arithmetic
 The server owns final monetary calculations.
 
 Frontend calculations may preview but cannot override server truth.
+
+Invoice calculations round each `quantity × unitPrice` line to Invoice-currency minor units using
+Decimal `ROUND_HALF_UP`, sum the rounded lines, apply discount to subtotal, then apply tax to the
+discounted taxable subtotal. A discount cannot exceed subtotal.
 
 ---
 
@@ -815,6 +823,11 @@ Generate PDF server-side from saved invoice data.
 Do not generate a historical invoice PDF by re-querying mutable current rates/client identity as the source of truth.
 
 PDF must be deterministic from saved invoice data.
+
+Persist payment terms and footer text on the Invoice at first Draft save. The migration for
+pre-existing Invoices uses current Business settings as a one-time best-effort backfill because
+their earlier settings history cannot be reconstructed. PDF rendering must also work without a
+logo.
 
 ---
 

@@ -535,17 +535,12 @@ The user must be able to create an entry using:
 - Date.
 - Start time and end time.
 
-The PRD also allows:
+The approved MVP also supports:
 
 - Direct duration input.
 
-### Open Decision
-
-Whether duration-only entry is part of the first implementation remains unresolved in the PRD.
-
-### Recommendation
-
-Support both modes in MVP because the PRD includes both and freelancers frequently know duration without precise start/end timestamps.
+Both range and duration-only entry modes are required in MVP because freelancers frequently
+know duration without precise start/end timestamps.
 
 ## FR-TME-002 — Required Manual Entry Fields
 
@@ -583,15 +578,10 @@ The user must be able to edit:
 
 - Duration recalculates after timestamp changes.
 - Changing project/task must preserve valid hierarchy.
-- Editing a billable entry may require rate recalculation or explicit rate handling.
-
-### Open Decision
-
-The PRD does not fully specify whether editing client/project on an existing non-invoiced entry automatically re-resolves its rate.
-
-### Recommendation
-
-For non-invoiced entries, keep the current historical rate unless the user explicitly chooses to refresh it. This avoids silent monetary changes.
+- Editing hierarchy on an already-billable completed entry preserves its historical rate and
+  currency unless the user explicitly refreshes them.
+- Changing a non-billable entry to billable resolves and snapshots the current rate and Client
+  currency; changing it back clears both snapshots.
 
 ## FR-TME-004 — Delete Time Entry
 
@@ -1033,35 +1023,28 @@ Support:
 
 ## FR-INV-008 — Tax
 
-**Priority:** P0 / Pending Open Decision
+**Priority:** P0
 
-The PRD says the MVP **may** start with one percentage tax field, but also lists taxes as an open decision.
-
-### Recommendation
-
-Include one percentage tax field in the first invoice implementation because invoice total structure already includes tax.
-
-This remains pending product approval.
+The approved MVP includes one percentage tax field. Tax applies after discount and is rounded
+to Invoice-currency minor units using Decimal `ROUND_HALF_UP`.
 
 ## FR-INV-009 — Discount
 
-**Priority:** P1
+**Priority:** P0
 
 The PRD allows:
 
 - Percentage discount.
 - Fixed discount.
 
-### Recommendation
-
-Implement one discount type selector with:
+The approved MVP implements one discount type selector with:
 
 ```text
 Percentage
 Fixed amount
 ```
 
-If MVP scope must be reduced, defer fixed discounts before percentage discounts.
+Discount applies to subtotal before tax and cannot exceed subtotal.
 
 ## FR-INV-010 — Save Draft
 
@@ -1207,11 +1190,8 @@ Removing a time entry from a draft should immediately return it to the uninvoice
 
 ## BR-INV-007 — Saved Draft and "Invoiced" State
 
-### Source Ambiguity
-
-The PRD says that when billable time is included in a saved invoice, time entries become linked to the invoice and appear as invoiced.
-
-Therefore, for MVP, **Draft invoices reserve their linked time entries**.
+For MVP, **Draft invoices reserve their linked time entries** as soon as the import transaction
+succeeds.
 
 This prevents accidental double billing before the invoice is sent.
 
@@ -1235,13 +1215,7 @@ INV-001
 INV-002
 ```
 
-### Open Decision
-
-The PRD asks whether numbers are assigned on draft creation or when finalized/sent.
-
-### Recommendation
-
-Assign an invoice number when the draft is first saved.
+An invoice number is assigned transactionally when the draft is first saved.
 
 Reason:
 
@@ -1249,7 +1223,7 @@ Reason:
 - PDF preview may require a stable invoice number.
 - This reduces numbering behavior differences across invoice states.
 
-This is not yet an approved product decision.
+The number remains stable through edits and lifecycle transitions and is never reused after Void.
 
 ---
 
@@ -1509,17 +1483,10 @@ Acceptable implementation strategies include:
 
 **Priority:** P0
 
-A single documented rounding strategy must be used consistently.
-
-### Source Gap
-
-The PRD does not specify the rounding mode.
-
-### Recommendation
-
-Use currency minor-unit rounding at invoice calculation boundaries and preserve sufficient precision during intermediate time × rate calculations.
-
-The exact rounding policy should be finalized in technical architecture.
+A single documented rounding strategy must be used consistently: Decimal `ROUND_HALF_UP` at
+Invoice currency minor-unit boundaries, with sufficient precision retained for fractional-hour
+quantity calculations. Line amounts are rounded first, subtotal is their sum, discount applies
+to subtotal, and tax applies to the discounted taxable subtotal.
 
 ---
 
@@ -2204,11 +2171,10 @@ Defer until after the core workflow is stable:
 
 ---
 
-# 40. Open Decisions Requiring Product Approval
+# 40. Product Decision Status
 
-The PRD intentionally leaves several questions unresolved.
-
-These should be decided before the affected implementation is considered final.
+Only the public deployment and authentication model remain open. The private/local MVP retains
+the fixed server-controlled owner and must not be represented as public multi-user deployment.
 
 ## OD-001 — Deployment Model
 
@@ -2230,7 +2196,7 @@ Question:
 
 Should tax be in the first invoice implementation or immediately after the first invoice milestone?
 
-**Recommendation:** Include one percentage tax field.
+**Approved:** Include one percentage tax field; apply it after discount.
 
 ## OD-004 — Manual Duration-Only Entry
 
@@ -2238,7 +2204,7 @@ Question:
 
 Should manual entries support duration-only input in addition to start/end timestamps?
 
-**Recommendation:** Yes.
+**Approved:** Yes.
 
 ## OD-005 — Multi-Currency Report Behavior
 
@@ -2246,7 +2212,7 @@ Question:
 
 How should monetary totals behave across multiple currencies?
 
-**Recommendation:** Group financial totals by currency; do not auto-convert.
+**Approved:** Group financial totals by historical Time Entry currency; do not auto-convert.
 
 ## OD-006 — Invoice Grouping Default
 
@@ -2256,7 +2222,7 @@ Options:
 - By project.
 - By task.
 
-**Recommendation:** Group by project.
+**Approved:** Group by Project, splitting lines by historical hourly rate.
 
 ## OD-007 — Paid Invoice Reopening
 
@@ -2264,7 +2230,7 @@ Question:
 
 Should paid invoices ever be reopenable?
 
-**Recommendation for MVP:** No. Treat paid invoices as locked.
+**Approved for MVP:** No. Paid is terminal and read-only.
 
 ## OD-008 — Dashboard Timing
 
@@ -2272,7 +2238,7 @@ Question:
 
 MVP or first post-MVP feature?
 
-**Recommendation:** Post-MVP.
+**Deferred:** Post-MVP.
 
 ## OD-009 — Clockify Import Priority
 
@@ -2280,7 +2246,7 @@ Question:
 
 Should historical Clockify import be prioritized after MVP?
 
-No recommendation is required until the core product is stable.
+**Deferred:** Re-evaluate after MVP.
 
 ## OD-010 — Invoice Number Assignment
 
@@ -2291,7 +2257,7 @@ Assign number:
 - When draft is created/saved.
 - When sent/finalized.
 
-**Recommendation:** Assign on first draft save.
+**Approved:** Assign transactionally on first successful Draft save.
 
 ## OD-011 — Rate Behavior After Entry Metadata Edit
 
@@ -2299,7 +2265,7 @@ Question:
 
 If an uninvoiced time entry changes project/client, should its rate automatically update?
 
-**Recommendation:** Do not silently change the stored rate. Offer explicit rate refresh if needed.
+**Approved:** Preserve stored rate and currency unless an explicit refresh is requested.
 
 ## OD-012 — Client Archive Cascade
 
@@ -2307,7 +2273,7 @@ Question:
 
 Should archiving a client automatically archive its projects?
 
-**Recommendation:** No automatic cascade; simply prevent new work selection beneath an archived client.
+**Approved:** No automatic cascade; prevent new work selection beneath an archived Client.
 
 ---
 

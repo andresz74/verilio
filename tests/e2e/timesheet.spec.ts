@@ -10,14 +10,10 @@ test("reviews and corrects historical time through the M5 exit gate", async ({ p
   const clientName = `M5 Client ${suffix}`;
   const projectName = `M5 Project ${suffix}`;
   const taskName = `M5 Task ${suffix}`;
-  const dateSlot = Math.floor(Date.now() / 1_000) % 84_000;
-  const year = 2_100 + Math.floor(dateSlot / 12);
-  const month = dateSlot % 12 + 1;
-  const monthText = String(month).padStart(2, "0");
-  const monthName = new Intl.DateTimeFormat("en-US", { month: "long", timeZone: "UTC" })
-    .format(new Date(Date.UTC(year, month - 1, 1)));
-  const firstDate = `${year}-${monthText}-10`;
-  const secondDate = `${year}-${monthText}-11`;
+  const year = 2035;
+  const monthName = "May";
+  const firstDate = "2035-05-10";
+  const secondDate = "2035-05-11";
 
   const clientResponse = await request.post("/api/v1/clients", {
     data: {

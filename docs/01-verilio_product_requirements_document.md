@@ -782,7 +782,7 @@ Support:
 - Discount.
 - Total.
 
-MVP may start with:
+Approved MVP behavior:
 
 - One percentage tax field.
 - One percentage or fixed discount field.
@@ -936,14 +936,15 @@ type TimeEntry = {
 
   description: string;
 
-  startAt: Date;
+  mode: "timer" | "range" | "duration";
+  workDate: string;
+  startAt?: Date;
   endAt?: Date;
-  durationSeconds: number;
+  durationSeconds?: number;
 
   billable: boolean;
   hourlyRate?: string;
-
-  invoiceId?: string;
+  currency?: string;
 
   createdAt: Date;
   updatedAt: Date;
@@ -966,8 +967,9 @@ type Invoice = {
   invoiceNumber: string;
   clientId: string;
 
-  issueDate: Date;
-  dueDate: Date;
+  issueDate: string;
+  dueDate: string;
+  paidAt?: string;
 
   status: InvoiceStatus;
   currency: string;
@@ -978,6 +980,8 @@ type Invoice = {
   total: string;
 
   notes?: string;
+  paymentTermsDays: number;
+  footer?: string;
 
   createdAt: Date;
   updatedAt: Date;
@@ -1248,13 +1252,12 @@ Open invoice
 - PDF export.
 - Business/client details.
 
-## Phase 9 — Refinement
+## Phase 9 — MVP Hardening
 
-- Dashboard.
-- Import/export utilities.
-- Better keyboard support.
-- UX polish.
-- Performance improvements.
+- Complete product-loop verification.
+- Billing, Timer, migration, accessibility, and error-state hardening.
+- Documentation and private/local release gate.
+- Focused performance improvements where they do not expand product scope.
 
 ---
 
@@ -1315,7 +1318,7 @@ Possible post-MVP additions:
 
 - Expenses.
 - Payments table with partial payments.
-- Automatic overdue status.
+- Automated overdue reminders and collection workflows.
 - Email invoices.
 - Recurring invoices.
 - Payment-provider integration.
@@ -1364,23 +1367,32 @@ A user must always be able to understand which time entries produced an invoice.
 
 A timer that loses state after refresh or browser interruption would be frustrating.
 
-**Mitigation:** persist running timer state server-side or in durable local state with authoritative timestamps.
+**Mitigation:** persist running timer state server-side with authoritative timestamps and database protection for one running Timer per owner.
 
 ---
 
-# 19. Open Product Decisions
+# 19. Product Decision Status
 
-These decisions can be made before implementation reaches the relevant phase.
+The private/local MVP uses a fixed server-controlled owner. Public deployment and its
+authentication model remain open and must be resolved before exposing Verilio to the public
+Internet.
 
-1. Will the first deployment be local/self-hosted, hosted SaaS, or both?
-2. Should authentication exist in the first version if there is only one user?
-3. Should invoices support taxes in the first release or immediately after MVP?
-4. Should manual time entries allow duration-only input as well as start/end time?
-5. Should the product support multiple currencies globally while restricting each invoice to one currency?
-6. Should invoice items group by project by default or show one line per entry?
-7. Should paid invoices be permanently locked or reopenable with an audit trail?
-8. Should the dashboard be part of the MVP or the first post-MVP feature?
-9. Should importing historical data from Clockify be a post-MVP priority?
+The following MVP decisions are approved:
+
+- One percentage tax field; percentage or fixed discount; discount before tax.
+- Invoice money rounds to currency minor units using Decimal `ROUND_HALF_UP`.
+- Manual time supports range and duration-only modes.
+- Completed billable time snapshots both its resolved hourly rate and Client currency. Legacy
+  currency values were backfilled from the then-current Client as a one-time best effort.
+- Reports separate money by currency and perform no automatic currency conversion.
+- Each Invoice has exactly one currency; incompatible historical Time cannot be imported.
+- Imported Time groups by Project by default and splits lines when historical rates differ.
+- Invoice numbers are assigned on first successful Draft save and remain stable.
+- A saved Draft immediately reserves linked Time.
+- Paid and Void are terminal in MVP. Void preserves historical source relationships while
+  releasing Time for active billing.
+- Overdue is derived from Sent status, due date, and the current Business date; it is not stored.
+- Dashboard and Clockify import remain post-MVP.
 
 ---
 

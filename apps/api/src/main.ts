@@ -12,7 +12,11 @@ loadEnvironment({
 
 const environment = parseEnvironment(process.env);
 const { db, pool } = createDatabaseClient(environment.DATABASE_URL);
-const app = buildApp({ db });
+const app = buildApp({
+  db,
+  logger: { level: environment.LOG_LEVEL },
+  ownerId: environment.LOCAL_USER_ID,
+});
 
 async function shutdown(signal: string): Promise<void> {
   app.log.info({ signal }, "Shutting down Verilio API");

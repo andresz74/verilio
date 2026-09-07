@@ -7,12 +7,8 @@ test("reports historical rates and currencies through the M6 exit gate", async (
   });
 
   const suffix = Date.now().toString().slice(-8);
-  const dateSlot = Math.floor(Date.now() / 1_000) % 84_000;
-  const year = 2_800 + Math.floor(dateSlot / 12);
-  const month = dateSlot % 12 + 1;
-  const monthText = String(month).padStart(2, "0");
-  const firstDate = `${year}-${monthText}-10`;
-  const secondDate = `${year}-${monthText}-11`;
+  const firstDate = "2036-06-10";
+  const secondDate = "2036-06-11";
 
   const usdClientName = `M6 USD ${suffix}`;
   const usdClient = await createClient(request, usdClientName, "USD", "75.0000");

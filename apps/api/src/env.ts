@@ -6,6 +6,9 @@ const EnvironmentSchema = z.object({
   DATABASE_URL: z.url().refine((url) => url.startsWith("postgresql://"), {
     message: "DATABASE_URL must use postgresql://",
   }),
+  LOCAL_USER_ID: z
+    .uuid()
+    .default("00000000-0000-4000-8000-000000000001"),
   LOG_LEVEL: z
     .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
     .default("info"),
@@ -24,4 +27,3 @@ export function parseEnvironment(source: NodeJS.ProcessEnv): Environment {
 
   return result.data;
 }
-

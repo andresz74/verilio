@@ -28,7 +28,7 @@ The preceding documents establish:
 
 - Product scope and goals.
 - Functional and non-functional requirements.
-- UX flows and provisional product decisions.
+- UX flows, approved MVP decisions, and remaining deployment decisions.
 - Visual and component-system requirements.
 
 This document turns those requirements into concrete technical decisions for:
@@ -1066,7 +1066,7 @@ This does **not** introduce teams, workspaces, roles, or multi-company UX.
 
 # 28. Time Entry Data Model
 
-The UX specification provisionally supports both:
+The approved MVP supports both:
 
 - Start/end entries.
 - Duration-only entries.
@@ -1647,7 +1647,11 @@ Transaction should cover:
 Transaction should cover:
 
 - Invoice state transition.
-- Relationship behavior needed to release source time.
+- Preservation of Invoice Item/Time Entry relationship rows for historical traceability.
+
+Active reservation is derived from a relationship to a non-void Invoice. Setting the Invoice
+status to `void` releases its source Time for future billing without deleting those relationship
+rows.
 
 The API must detect race conditions rather than silently double-assigning time.
 
@@ -2871,7 +2875,7 @@ Local filesystem vs S3-compatible storage depends on deployment.
 
 ## OAD-004 — Duration-Only Manual Entry
 
-Architecture supports it because the UX document provisionally selects it. If product scope changes, `TimeEntry.mode` can still remain useful.
+Approved and implemented alongside range entry; `TimeEntry.mode` preserves the semantic distinction.
 
 ---
 

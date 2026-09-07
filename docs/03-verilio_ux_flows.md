@@ -116,11 +116,12 @@ Color may reinforce state, but must not be the only indicator.
 
 ---
 
-# 3. Provisional UX Decisions
+# 3. Approved MVP UX Decisions
 
-The requirements analysis identifies several open product decisions. To make the UX flows concrete, this document uses the following **provisional MVP assumptions**. These should be treated as working decisions until explicitly revised.
+The following choices are approved for the private/local MVP. Public deployment and
+authentication remain separate release decisions.
 
-| Decision | Provisional MVP Choice |
+| Decision | Approved MVP Choice |
 |---|---|
 | Deployment | Web app; architecture may later support hosted and self-hosted deployment |
 | Authentication | UX should not require multi-user concepts; authentication may be introduced by architecture/deployment needs |
@@ -1305,7 +1306,7 @@ Tax
 Total
 ```
 
-Provisional tax UX:
+Approved tax UX:
 
 ```text
 Tax (%)
@@ -1321,6 +1322,10 @@ Discount value
 Recalculation should occur immediately and visibly.
 
 Do not allow a display total that differs from the persisted calculation.
+
+The server-authoritative order is: round each line amount to currency minor units, sum the
+subtotal, apply and round the discount, calculate tax on the discounted subtotal, then calculate
+the total. Monetary rounding uses Decimal `ROUND_HALF_UP`.
 
 ---
 

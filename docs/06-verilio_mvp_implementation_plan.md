@@ -1414,6 +1414,20 @@ Verify:
 - Invoice calculation failure blocks transitions.
 - API conflicts surface meaningful UX.
 
+## M9.8 — Migration and Operational Gate
+
+Verify the complete checked-in migration chain against an empty PostgreSQL database, including
+the one-time best-effort Time Entry currency and Invoice payment-terms/footer backfills. Run the
+integration suite against that fresh schema. Verify compiled API startup, web production-build
+serving, `/health/live`, `/health/ready`, structured logs, request IDs, and documented environment
+validation.
+
+## M9.9 — Private Release Boundary
+
+The MVP release target remains local/private fixed-owner mode. Browser requests never control
+the owner ID. Documentation must state clearly that public Internet deployment requires a later
+authentication and authorization decision.
+
 ## M9 Exit Gate — MVP Complete
 
 MVP is complete only if:
@@ -1449,9 +1463,8 @@ After P0 is stable, implement in approximate value order:
 11. Hours-by-day chart.
 12. Hours-by-project chart.
 13. CSV export if deferred.
-14. Percentage/fixed discount refinement.
-15. Tablet polish.
-16. Mobile timer polish.
+14. Tablet polish.
+15. Additional mobile polish.
 
 ---
 
@@ -1479,7 +1492,7 @@ Do not add during MVP:
 
 ---
 
-# 18. Open Decisions That Can Block Milestones
+# 18. Remaining Release Decisions
 
 ## OD-A — Deployment Model
 
@@ -1493,7 +1506,7 @@ May remain deferred locally, but public hosted access requires authentication.
 
 ## OD-C — Duration-Only Manual Entry
 
-Current plan includes it because UX/architecture provisionally support it.
+Approved and implemented for MVP alongside range entry.
 
 ## OD-D — Hosted File Storage
 

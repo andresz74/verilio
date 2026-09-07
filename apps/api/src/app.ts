@@ -1,6 +1,9 @@
 import type { VerilioDatabase } from "@verilio/db";
 import { checkDatabaseConnection } from "@verilio/db";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, {
+  type FastifyInstance,
+  type FastifyServerOptions,
+} from "fastify";
 
 import { registerClientRoutes } from "./client-routes.js";
 import { ClientService, type ClientServiceContract } from "./client-service.js";
@@ -13,6 +16,7 @@ import { registerReportRoutes } from "./report-routes.js";
 import { ReportService, type ReportServiceContract } from "./report-service.js";
 import { registerSettingsRoutes } from "./settings-routes.js";
 import {
+  LOCAL_USER_ID,
   SettingsService,
   type SettingsServiceContract,
 } from "./settings-service.js";
@@ -26,7 +30,8 @@ import {
 
 export type BuildAppOptions = {
   db: VerilioDatabase;
-  logger?: boolean;
+  logger?: FastifyServerOptions["logger"];
+  ownerId?: string;
   readinessCheck?: (db: VerilioDatabase) => Promise<void>;
   clientService?: ClientServiceContract;
   invoiceService?: InvoiceServiceContract;
@@ -40,14 +45,15 @@ export type BuildAppOptions = {
 export function buildApp({
   db,
   logger = true,
+  ownerId = LOCAL_USER_ID,
   readinessCheck = checkDatabaseConnection,
-  clientService = new ClientService(db),
-  invoiceService = new InvoiceService(db),
-  projectService = new ProjectService(db),
-  reportService = new ReportService(db),
-  settingsService = new SettingsService(db),
-  taskService = new TaskService(db),
-  timeEntryService = new TimeEntryService(db),
+  clientService = new ClientService(db, ownerId),
+  invoiceService = new InvoiceService(db, ownerId),
+  projectService = new ProjectService(db, ownerId),
+  reportService = new ReportService(db, ownerId),
+  settingsService = new SettingsService(db, ownerId),
+  taskService = new TaskService(db, ownerId),
+  timeEntryService = new TimeEntryService(db, ownerId),
 }: BuildAppOptions): FastifyInstance {
   const app = Fastify({
     logger,

@@ -192,7 +192,7 @@ function TimerComposer({ running, onConflict }: { running: boolean; onConflict: 
     },
   });
   return (
-    <section aria-labelledby="timer-composer-heading" className="rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-5">
+    <section aria-label={running ? "Start something else" : "What are you working on?"} className="rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-5">
       <div className="mb-5"><h2 id="timer-composer-heading" className="m-0 text-base font-semibold">{running ? "Start something else" : "What are you working on?"}</h2>{running ? <p className="mb-0 mt-1 text-xs text-[var(--color-text-muted)]">Starting this will ask what to do with the current timer.</p> : null}</div>
       <form noValidate className="grid gap-5" onSubmit={(event) => void handleSubmit((values) => mutation.mutate(values))(event)}>
         {mutation.isError && !(mutation.error instanceof TimeEntryApiError && mutation.error.code === "TIMER_ALREADY_RUNNING") ? <InlineError>Timer could not be started. No new time is being recorded. {mutation.error instanceof Error ? mutation.error.message : ""}</InlineError> : null}

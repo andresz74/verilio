@@ -8,12 +8,8 @@ test("completes Draft → PDF → Sent → Paid while preserving reserved histor
   });
 
   const suffix = Date.now().toString().slice(-8);
-  const dateSlot = Math.floor(Date.now() / 1_000) % 84_000;
-  const year = 3_200 + Math.floor(dateSlot / 12);
-  const month = dateSlot % 12 + 1;
-  const monthText = String(month).padStart(2, "0");
-  const firstDate = `${year}-${monthText}-10`;
-  const secondDate = `${year}-${monthText}-11`;
+  const firstDate = "2037-07-10";
+  const secondDate = "2037-07-11";
   const invoicePrefix = `M7-${suffix}-`;
 
   const settingsResponse = await request.get("/api/v1/settings");

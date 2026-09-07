@@ -182,6 +182,38 @@ describe("M4 manual entries and historical edits", () => {
       billable: true,
     });
     expect(becameBillable).toMatchObject({ hourlyRate: "200.0000", currency: "USD" });
+
+    const becameNonBillable = await service.update(duration.id, {
+      mode: "duration",
+      workDate: duration.workDate,
+      durationSeconds: 3_600,
+      clientId: client.id,
+      projectId: secondProject.id,
+      taskId: null,
+      description: duration.description,
+      billable: false,
+    });
+    expect(becameNonBillable).toMatchObject({
+      billable: false,
+      hourlyRate: null,
+      currency: null,
+    });
+
+    const resnapshotted = await service.update(duration.id, {
+      mode: "duration",
+      workDate: duration.workDate,
+      durationSeconds: 3_600,
+      clientId: client.id,
+      projectId: secondProject.id,
+      taskId: null,
+      description: duration.description,
+      billable: true,
+    });
+    expect(resnapshotted).toMatchObject({
+      billable: true,
+      hourlyRate: "200.0000",
+      currency: "USD",
+    });
     expect(await service.delete(duration.id)).toBe(true);
     expect(await service.get(duration.id)).toBeNull();
   });

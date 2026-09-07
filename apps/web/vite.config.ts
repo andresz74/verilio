@@ -12,4 +12,10 @@ export default defineConfig({
       "/health": apiTarget,
     },
   },
+  preview: {
+    proxy: {
+      "/api": apiTarget,
+      "/health": apiTarget,
+    },
+  },
 });
