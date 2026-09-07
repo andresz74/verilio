@@ -5,6 +5,8 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { registerClientRoutes } from "./client-routes.js";
 import { ClientService, type ClientServiceContract } from "./client-service.js";
 import { ApiError } from "./errors.js";
+import { registerInvoiceRoutes } from "./invoice-routes.js";
+import { InvoiceService, type InvoiceServiceContract } from "./invoice-service.js";
 import { registerProjectRoutes } from "./project-routes.js";
 import { ProjectService, type ProjectServiceContract } from "./project-service.js";
 import { registerReportRoutes } from "./report-routes.js";
@@ -27,6 +29,7 @@ export type BuildAppOptions = {
   logger?: boolean;
   readinessCheck?: (db: VerilioDatabase) => Promise<void>;
   clientService?: ClientServiceContract;
+  invoiceService?: InvoiceServiceContract;
   projectService?: ProjectServiceContract;
   reportService?: ReportServiceContract;
   settingsService?: SettingsServiceContract;
@@ -39,6 +42,7 @@ export function buildApp({
   logger = true,
   readinessCheck = checkDatabaseConnection,
   clientService = new ClientService(db),
+  invoiceService = new InvoiceService(db),
   projectService = new ProjectService(db),
   reportService = new ReportService(db),
   settingsService = new SettingsService(db),
@@ -71,6 +75,7 @@ export function buildApp({
 
   registerSettingsRoutes(app, settingsService);
   registerClientRoutes(app, clientService);
+  registerInvoiceRoutes(app, invoiceService);
   registerProjectRoutes(app, projectService);
   registerReportRoutes(app, reportService);
   registerTaskRoutes(app, taskService);

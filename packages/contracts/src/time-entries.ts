@@ -92,6 +92,10 @@ export const TimeEntryDtoSchema = z.object({
   billable: z.boolean(),
   hourlyRate: NonNegativeDecimalStringSchema.nullable(),
   currency: CurrencyCodeSchema.nullable(),
+  invoice: z.object({
+    id: IdSchema,
+    invoiceNumber: z.string(),
+  }).nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });

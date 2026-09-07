@@ -1012,6 +1012,11 @@ The user can select a billing period and see correct tracked time, billable time
 
 Create invoice Drafts from tracked work while preserving traceability and preventing double invoicing.
 
+Approved MVP rules for this milestone are: one percentage tax field; percentage
+or fixed-amount discounts; Project grouping by default; number assignment on the
+first successful Draft save; immediate Draft reservation of linked Time; exactly
+one currency per Invoice with no conversion; and Paid/Void as terminal states.
+
 ## M7.1 — Invoice Tables
 
 Create:
@@ -1051,7 +1056,7 @@ Paid/Void terminal in MVP.
 
 ## M7.4 — Invoice Numbering
 
-Current provisional rule:
+Approved rule:
 
 ```text
 assign on first successful Draft save
@@ -1069,13 +1074,16 @@ Implement:
 - Tax.
 - Total.
 
-### Blocking Product Decision
+Approved calculation policy:
 
-Before M7 exits, explicitly decide:
-
-- Discount/tax ordering.
-- Rounding behavior.
-- Any line-level vs subtotal-level rule.
+- Round each `quantity × unit price` line to currency minor units using Decimal
+  `ROUND_HALF_UP`.
+- Subtotal is the sum of persisted rounded line amounts.
+- Apply a percentage or fixed discount to subtotal; the rounded discount cannot
+  exceed subtotal.
+- Apply one percentage tax to the discounted taxable subtotal.
+- Total is taxable subtotal plus rounded tax.
+- Persisted server calculations are authoritative.
 
 ## M7.6 — Invoice API
 
@@ -1097,6 +1105,7 @@ Eligibility:
 same client
 billable
 inside date range
+historical Time Entry currency matches Invoice currency
 not linked to a non-void invoice
 ```
 
@@ -1482,25 +1491,11 @@ May remain open through private/local development, but must be resolved before p
 
 May remain deferred locally, but public hosted access requires authentication.
 
-## OD-C — Tax Calculation Rule
-
-Must be resolved before M7 exit.
-
-## OD-D — Discount Rule
-
-Must be resolved before final invoice math.
-
-## OD-E — Invoice Number Assignment
-
-Current plan: first saved Draft.
-
-Confirm before M7.
-
-## OD-F — Duration-Only Manual Entry
+## OD-C — Duration-Only Manual Entry
 
 Current plan includes it because UX/architecture provisionally support it.
 
-## OD-G — Hosted File Storage
+## OD-D — Hosted File Storage
 
 Only blocks hosted logo upload, not core billing.
 

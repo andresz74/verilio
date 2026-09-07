@@ -64,6 +64,7 @@ const detailedEntry = {
   billable: true,
   hourlyRate: "85.0000",
   currency: "USD",
+  invoice: null,
   amount: "170.00",
   invoiceStatus: "not-invoiced" as const,
   createdAt: "2026-09-05T12:00:00.000Z",
@@ -163,6 +164,21 @@ describe("ReportsPage", () => {
     expect(within(table).getAllByText("—")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "Next" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("page=2"));
+  });
+
+  it("links relationship-driven Invoiced report rows to their Draft", async () => {
+    baseHandlers();
+    server.use(http.get("/api/v1/reports/detailed", () => HttpResponse.json({
+      range: common.range,
+      entries: [{ ...detailedEntry, invoice: { id: "66666666-6666-4666-8666-666666666666", invoiceNumber: "INV-7" }, invoiceStatus: "invoiced" }],
+      page: 1,
+      pageSize: 25,
+      total: 1,
+      totalPages: 1,
+    })));
+    renderReports("/reports/detailed?from=2026-09-01&to=2026-09-07&invoiceStatus=invoiced");
+    const link = await screen.findByRole("link", { name: "INV-7" });
+    expect(link).toHaveAttribute("href", "/invoices/66666666-6666-4666-8666-666666666666");
   });
 
   it("keeps filters through a retryable error", async () => {

@@ -1,5 +1,6 @@
 export * from "./clients.js";
 export * from "./foundation.js";
+export * from "./invoices.js";
 export * from "./projects.js";
 export * from "./reports.js";
 export * from "./settings.js";

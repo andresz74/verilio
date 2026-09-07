@@ -6,8 +6,10 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   numeric,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uuid,
@@ -272,5 +274,123 @@ export const timeEntries = pgTable(
         OR (${table.billable} AND ${table.hourlyRate} IS NOT NULL AND ${table.hourlyRate} >= 0 AND ${table.currency} IS NOT NULL)
         OR (NOT ${table.billable} AND ${table.hourlyRate} IS NULL AND ${table.currency} IS NULL)`,
     ),
+  ],
+);
+
+export type InvoiceSellerSnapshot = {
+  businessName: string;
+  email: string;
+  address: string;
+  phone: string | null;
+  taxIdentifier: string | null;
+};
+
+export type InvoiceClientSnapshot = {
+  name: string;
+  email: string | null;
+  ccRecipients: string[];
+  address: string | null;
+};
+
+export const invoices = pgTable(
+  "invoices",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    invoiceNumber: varchar("invoice_number", { length: 64 }).notNull(),
+    clientId: uuid("client_id").notNull(),
+    status: varchar("status", { length: 16 }).notNull().default("draft"),
+    currency: varchar("currency", { length: 3 }).notNull(),
+    issueDate: date("issue_date", { mode: "string" }).notNull(),
+    dueDate: date("due_date", { mode: "string" }).notNull(),
+    paidAt: date("paid_at", { mode: "string" }),
+    sellerSnapshot: jsonb("seller_snapshot").$type<InvoiceSellerSnapshot>().notNull(),
+    clientSnapshot: jsonb("client_snapshot").$type<InvoiceClientSnapshot>().notNull(),
+    subtotal: numeric("subtotal", { precision: 18, scale: 4 }).notNull().default("0"),
+    discountType: varchar("discount_type", { length: 16 }).notNull().default("none"),
+    discountValue: numeric("discount_value", { precision: 18, scale: 4 }).notNull().default("0"),
+    discountAmount: numeric("discount_amount", { precision: 18, scale: 4 }).notNull().default("0"),
+    taxPercent: numeric("tax_percent", { precision: 7, scale: 4 }).notNull().default("0"),
+    taxAmount: numeric("tax_amount", { precision: 18, scale: 4 }).notNull().default("0"),
+    total: numeric("total", { precision: 18, scale: 4 }).notNull().default("0"),
+    notes: text("notes"),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("invoices_user_number_unique").on(table.userId, table.invoiceNumber),
+    foreignKey({
+      columns: [table.clientId, table.userId],
+      foreignColumns: [clients.id, clients.userId],
+      name: "invoices_client_owner_fk",
+    }).onDelete("restrict"),
+    index("invoices_user_status_idx").on(table.userId, table.status),
+    index("invoices_user_client_issue_date_idx").on(
+      table.userId,
+      table.clientId,
+      table.issueDate,
+    ),
+    check("invoices_status_valid", sql`${table.status} IN ('draft', 'sent', 'paid', 'void')`),
+    check("invoices_discount_type_valid", sql`${table.discountType} IN ('none', 'percentage', 'fixed')`),
+    check("invoices_dates_valid", sql`${table.dueDate} >= ${table.issueDate}`),
+    check("invoices_amounts_nonnegative", sql`${table.subtotal} >= 0 AND ${table.discountValue} >= 0 AND ${table.discountAmount} >= 0 AND ${table.taxAmount} >= 0 AND ${table.total} >= 0`),
+    check("invoices_discount_not_above_subtotal", sql`${table.discountAmount} <= ${table.subtotal}`),
+    check("invoices_tax_percent_range", sql`${table.taxPercent} >= 0 AND ${table.taxPercent} <= 100`),
+    check("invoices_percentage_discount_range", sql`${table.discountType} <> 'percentage' OR ${table.discountValue} <= 100`),
+    check("invoices_paid_date_valid", sql`(${table.status} = 'paid' AND ${table.paidAt} IS NOT NULL) OR (${table.status} <> 'paid' AND ${table.paidAt} IS NULL)`),
+  ],
+);
+
+export const invoiceItems = pgTable(
+  "invoice_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    invoiceId: uuid("invoice_id")
+      .notNull()
+      .references(() => invoices.id, { onDelete: "cascade" }),
+    kind: varchar("kind", { length: 16 }).notNull(),
+    description: text("description").notNull(),
+    quantity: numeric("quantity", { precision: 24, scale: 12 }).notNull(),
+    unitPrice: numeric("unit_price", { precision: 18, scale: 4 }).notNull(),
+    amount: numeric("amount", { precision: 18, scale: 4 }).notNull(),
+    sortOrder: integer("sort_order").notNull(),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index("invoice_items_invoice_sort_idx").on(table.invoiceId, table.sortOrder),
+    check("invoice_items_kind_valid", sql`${table.kind} IN ('manual', 'time')`),
+    check("invoice_items_quantity_positive", sql`${table.quantity} > 0`),
+    check("invoice_items_unit_price_nonnegative", sql`${table.unitPrice} >= 0`),
+    check("invoice_items_amount_nonnegative", sql`${table.amount} >= 0`),
+  ],
+);
+
+export const invoiceItemTimeEntries = pgTable(
+  "invoice_item_time_entries",
+  {
+    invoiceItemId: uuid("invoice_item_id")
+      .notNull()
+      .references(() => invoiceItems.id, { onDelete: "cascade" }),
+    timeEntryId: uuid("time_entry_id")
+      .notNull()
+      .references(() => timeEntries.id, { onDelete: "restrict" }),
+    createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.invoiceItemId, table.timeEntryId] }),
+    index("invoice_item_time_entries_time_entry_idx").on(table.timeEntryId),
   ],
 );

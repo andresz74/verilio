@@ -29,6 +29,7 @@ const running = {
   billable: true,
   hourlyRate: null,
   currency: null,
+  invoice: null,
   createdAt: "2026-09-05T13:59:00.000Z",
   updatedAt: "2026-09-05T13:59:00.000Z",
 };

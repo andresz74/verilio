@@ -1495,6 +1495,10 @@ CSV export is generated server-side from the full filtered query rather than onl
 
 # 43. Invoice Persistence Model
 
+Each Invoice stores exactly one currency. There is no automatic currency
+conversion; tracked Time is eligible only when its historical currency snapshot
+matches the Invoice currency.
+
 Recommended invoice fields include:
 
 ```text
@@ -1703,7 +1707,7 @@ while persisted `status` remains `sent`.
 
 # 51. Invoice Numbering
 
-## Provisional Architecture Decision
+## Approved Architecture Decision
 
 Assign the invoice number on first successful Draft save.
 
@@ -1716,7 +1720,7 @@ Recommended:
 - Never reuse numbers from Paid/Sent/Void invoices.
 - Preserve number after Void.
 
-If the product decision changes later to assign on Sent, this section must be revised before implementation.
+The number remains stable for all later Draft edits.
 
 ---
 
@@ -1742,9 +1746,25 @@ tax
 total
 ```
 
-The exact tax/discount ordering must be explicitly defined before invoice calculation implementation.
+The approved MVP calculation policy is:
 
-The product documents currently leave some tax behavior open.
+```text
+line amount = quantity × unit price, rounded to currency minor units
+subtotal = sum of persisted rounded line amounts
+discount = percentage of subtotal or a fixed invoice-currency amount
+taxable subtotal = subtotal - rounded discount
+tax = taxable subtotal × one percentage tax field, rounded to currency minor units
+total = taxable subtotal + tax
+```
+
+Discount may not exceed subtotal. All monetary rounding uses Decimal
+`ROUND_HALF_UP`. Server calculations are authoritative; the browser may only
+preview the same shared domain calculation.
+
+Imported time groups by Project by default. Every imported line has one rate,
+so entries with different historical rates are split into separate lines. Each
+Invoice has exactly one currency and imported Time Entry currency must match it;
+no automatic conversion exists.
 
 ---
 
@@ -2843,23 +2863,11 @@ Not selected until public-hosted deployment is confirmed.
 
 Architecture supports both directions, but operational packaging differs.
 
-## OAD-003 — Tax Calculation Order
-
-Need explicit product rule before invoice math is finalized.
-
-## OAD-004 — Discount/Tax Interaction
-
-Need explicit ordering/rounding rules.
-
-## OAD-005 — Invoice Number Assignment
-
-This document provisionally selects first Draft save; product approval should confirm it.
-
-## OAD-006 — File Storage Provider
+## OAD-003 — File Storage Provider
 
 Local filesystem vs S3-compatible storage depends on deployment.
 
-## OAD-007 — Duration-Only Manual Entry
+## OAD-004 — Duration-Only Manual Entry
 
 Architecture supports it because the UX document provisionally selects it. If product scope changes, `TimeEntry.mode` can still remain useful.
 

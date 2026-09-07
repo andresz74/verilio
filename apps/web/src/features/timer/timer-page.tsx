@@ -14,6 +14,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock3, Plus, Square } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 
@@ -132,7 +133,7 @@ export function TimerPage() {
               {recentQuery.data.entries.map((entry) => (
                 <article key={entry.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0"><h3 className="m-0 truncate text-sm font-semibold">{entry.description}</h3><p className="mb-0 mt-1 text-xs text-[var(--color-text-secondary)]">{entry.workDate} · {hierarchyLabel(entry)}</p><div className="mt-2 flex gap-2"><StatusBadge tone={entry.billable ? "success" : "neutral"}>{entry.billable ? `Billable · ${entry.hourlyRate ?? "—"}/hr` : "Non-billable"}</StatusBadge><StatusBadge tone="neutral">{entry.mode}</StatusBadge></div></div>
-                  <div className="flex shrink-0 items-center gap-2"><strong className="mr-2 text-sm tabular-nums">{formatDuration(entry.durationSeconds)}</strong><Button size="sm" variant="secondary" onClick={() => setEditing(entry)}>Edit</Button><Button size="sm" variant="quiet" onClick={() => setDeleting(entry)}>Delete</Button></div>
+                  <div className="flex shrink-0 items-center gap-2"><strong className="mr-2 text-sm tabular-nums">{formatDuration(entry.durationSeconds)}</strong>{entry.invoice ? <Link className="inline-flex min-h-8 items-center px-2 text-sm font-semibold text-[var(--color-accent-active)] underline" to={`/invoices/${entry.invoice.id}`}>View {entry.invoice.invoiceNumber}</Link> : <><Button size="sm" variant="secondary" onClick={() => setEditing(entry)}>Edit</Button><Button size="sm" variant="quiet" onClick={() => setDeleting(entry)}>Delete</Button></>}</div>
                 </article>
               ))}
             </div>

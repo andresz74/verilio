@@ -363,7 +363,7 @@ const detailedColumns = columnHelper.columns([
   columnHelper.accessor("billable", { header: "Billing", cell: (info) => <StatusBadge tone={info.getValue() ? "success" : "neutral"}>{info.getValue() ? "Billable" : "Non-billable"}</StatusBadge> }),
   columnHelper.accessor("hourlyRate", { header: "Rate", cell: (info) => info.row.original.currency && info.getValue() ? `${info.row.original.currency} ${formatMoney(info.getValue()!, info.row.original.currency)}/hr` : "—" }),
   columnHelper.accessor("amount", { header: "Amount", cell: (info) => info.row.original.currency && info.getValue() ? `${info.row.original.currency} ${formatMoney(info.getValue()!, info.row.original.currency)}` : "—" }),
-  columnHelper.accessor("invoiceStatus", { header: "Invoice", cell: () => <StatusBadge tone="neutral">Not invoiced</StatusBadge> }),
+  columnHelper.accessor("invoiceStatus", { header: "Invoice", cell: (info) => info.row.original.invoice ? <Link className="font-semibold text-[var(--color-accent-active)] underline" to={`/invoices/${info.row.original.invoice.id}`}>{info.row.original.invoice.invoiceNumber}</Link> : <StatusBadge tone="neutral">Not invoiced</StatusBadge> }),
 ]);
 
 function DetailedTable({ entries, timezone }: { entries: ReportDetailedRow[]; timezone: string }) {

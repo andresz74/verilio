@@ -119,7 +119,7 @@ export type ReportSummaryResponse = z.infer<typeof ReportSummaryResponseSchema>;
 
 export const ReportDetailedRowSchema = TimeEntryDtoSchema.extend({
   amount: DecimalStringSchema.nullable(),
-  invoiceStatus: z.literal("not-invoiced"),
+  invoiceStatus: z.enum(["not-invoiced", "invoiced"]),
 });
 export type ReportDetailedRow = z.infer<typeof ReportDetailedRowSchema>;
 

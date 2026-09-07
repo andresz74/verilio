@@ -46,3 +46,10 @@ export function calculateHistoricalTimeAmount(input: {
     input.currency,
   );
 }
+
+export function sumMoney(amounts: DecimalInput[], currency: string): string {
+  return roundMoney(
+    amounts.reduce<Decimal>((sum, amount) => sum.plus(amount), new Decimal(0)),
+    currency,
+  );
+}

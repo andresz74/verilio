@@ -1,8 +1,9 @@
 import { Navigate, createBrowserRouter } from "react-router-dom";
 
 import { AppShell } from "./app-shell.js";
-import { PlaceholderPage } from "./placeholder-page.js";
 import { ClientsPage } from "../features/clients/clients-page.js";
+import { InvoiceEditorPage } from "../features/invoices/invoice-editor-page.js";
+import { InvoicesPage } from "../features/invoices/invoices-page.js";
 import { ProjectDetailPage } from "../features/projects/project-detail-page.js";
 import { ProjectsPage } from "../features/projects/projects-page.js";
 import { ReportsIndexRedirect, ReportsPage } from "../features/reports/reports-page.js";
@@ -46,13 +47,10 @@ export const router = createBrowserRouter([
       },
       {
         path: "invoices",
-        element: (
-          <PlaceholderPage
-            title="Invoices"
-            description="Turn verified work into professional invoices."
-          />
-        ),
+        element: <InvoicesPage />,
       },
+      { path: "invoices/new", element: <InvoiceEditorPage /> },
+      { path: "invoices/:invoiceId", element: <InvoiceEditorPage /> },
       {
         path: "settings",
         element: <SettingsPage />,

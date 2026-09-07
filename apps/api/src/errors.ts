@@ -11,6 +11,10 @@ export class ApiError extends Error {
       | "TIMER_ALREADY_RUNNING"
       | "NO_RUNNING_TIMER"
       | "TIME_ENTRY_NOT_EDITABLE"
+      | "TIME_ENTRY_INVOICED"
+      | "TIME_ENTRY_ALREADY_INVOICED"
+      | "INVOICE_STATE_INVALID"
+      | "INVOICE_CALCULATION_ERROR"
       | "SETTINGS_REQUIRED",
     message: string,
     readonly fieldErrors: Record<string, string[]> | null = null,

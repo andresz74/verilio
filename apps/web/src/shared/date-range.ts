@@ -83,7 +83,7 @@ function monthRange(today: string, offset: number): { from: string; to: string }
   return { from: serialize(first), to: serialize(last) };
 }
 
-function addDays(value: string, days: number): string {
+export function addDays(value: string, days: number): string {
   const date = parseDate(value);
   date.setUTCDate(date.getUTCDate() + days);
   return serialize(date);

@@ -8,7 +8,7 @@ import type {
   ReportSummaryResponse,
 } from "@verilio/contracts";
 import type { VerilioDatabase } from "@verilio/db";
-import { clients, projects, tasks, timeEntries } from "@verilio/db";
+import { clients, invoiceItems, invoiceItemTimeEntries, invoices, projects, tasks, timeEntries } from "@verilio/db";
 import { calculateHistoricalTimeAmount, roundMoney } from "@verilio/domain";
 import {
   and,
@@ -16,8 +16,11 @@ import {
   desc,
   eq,
   gte,
+  exists,
+  inArray,
   isNotNull,
   lte,
+  ne,
   sql,
   type SQL,
 } from "drizzle-orm";
@@ -52,8 +55,6 @@ export class ReportService implements ReportServiceContract {
 
   async summary(input: ReportSummaryQuery): Promise<ReportSummaryResponse> {
     await this.validateHierarchy(input);
-    if (input.invoiceStatus === "invoiced") return emptySummary(input);
-
     const where = this.where(input);
     const group = groupDefinition(input.groupBy);
     const [totalsRows, currencyRows, durationGroups, amountGroups, dayRows, projectRows] =
@@ -169,8 +170,6 @@ export class ReportService implements ReportServiceContract {
 
   async detailed(input: ReportDetailedQuery): Promise<ReportDetailedResponse> {
     await this.validateHierarchy(input);
-    if (input.invoiceStatus === "invoiced") return emptyDetailed(input);
-
     const where = this.where(input);
     const [rows, totalRows] = await Promise.all([
       this.db
@@ -197,35 +196,40 @@ export class ReportService implements ReportServiceContract {
     ]);
     const total = totalRows[0]?.value ?? 0;
 
+    const invoiceReferences = await this.loadInvoiceReferences(rows.map(({ entry }) => entry.id));
     return {
       range: { from: input.from, to: input.to },
-      entries: rows.map(({ entry, clientName, projectName, taskName }): ReportDetailedRow => ({
-        id: entry.id,
-        clientId: entry.clientId,
-        clientName,
-        projectId: entry.projectId,
-        projectName,
-        taskId: entry.taskId,
-        taskName,
-        description: entry.description,
-        mode: entry.mode as ReportDetailedRow["mode"],
-        workDate: entry.workDate,
-        startAt: entry.startAt?.toISOString() ?? null,
-        endAt: entry.endAt?.toISOString() ?? null,
-        durationSeconds: entry.durationSeconds,
-        billable: entry.billable,
-        hourlyRate: entry.hourlyRate,
-        currency: entry.currency,
-        amount: calculateHistoricalTimeAmount({
+      entries: rows.map(({ entry, clientName, projectName, taskName }): ReportDetailedRow => {
+        const invoice = invoiceReferences.get(entry.id) ?? null;
+        return {
+          id: entry.id,
+          clientId: entry.clientId,
+          clientName,
+          projectId: entry.projectId,
+          projectName,
+          taskId: entry.taskId,
+          taskName,
+          description: entry.description,
+          mode: entry.mode as ReportDetailedRow["mode"],
+          workDate: entry.workDate,
+          startAt: entry.startAt?.toISOString() ?? null,
+          endAt: entry.endAt?.toISOString() ?? null,
+          durationSeconds: entry.durationSeconds,
           billable: entry.billable,
-          currency: entry.currency,
-          durationSeconds: entry.durationSeconds ?? 0,
           hourlyRate: entry.hourlyRate,
-        }),
-        invoiceStatus: "not-invoiced",
-        createdAt: entry.createdAt.toISOString(),
-        updatedAt: entry.updatedAt.toISOString(),
-      })),
+          currency: entry.currency,
+          amount: calculateHistoricalTimeAmount({
+            billable: entry.billable,
+            currency: entry.currency,
+            durationSeconds: entry.durationSeconds ?? 0,
+            hourlyRate: entry.hourlyRate,
+          }),
+          invoice,
+          invoiceStatus: invoice ? "invoiced" : "not-invoiced",
+          createdAt: entry.createdAt.toISOString(),
+          updatedAt: entry.updatedAt.toISOString(),
+        };
+      }),
       page: input.page,
       pageSize: input.pageSize,
       total,
@@ -247,7 +251,38 @@ export class ReportService implements ReportServiceContract {
         : input.billable === "non-billable"
           ? eq(timeEntries.billable, false)
           : undefined,
+      input.invoiceStatus === "invoiced"
+        ? this.reservationExists()
+        : input.invoiceStatus === "not-invoiced"
+          ? sql`not (${this.reservationExists()})`
+          : undefined,
     )!;
+  }
+
+  private reservationExists(): SQL {
+    return exists(
+      this.db
+        .select({ one: sql`1` })
+        .from(invoiceItemTimeEntries)
+        .innerJoin(invoiceItems, eq(invoiceItemTimeEntries.invoiceItemId, invoiceItems.id))
+        .innerJoin(invoices, eq(invoiceItems.invoiceId, invoices.id))
+        .where(and(
+          eq(invoiceItemTimeEntries.timeEntryId, timeEntries.id),
+          eq(invoices.userId, this.ownerId),
+          ne(invoices.status, "void"),
+        )),
+    );
+  }
+
+  private async loadInvoiceReferences(ids: string[]): Promise<Map<string, { id: string; invoiceNumber: string }>> {
+    if (!ids.length) return new Map();
+    const rows = await this.db
+      .select({ timeEntryId: invoiceItemTimeEntries.timeEntryId, id: invoices.id, invoiceNumber: invoices.invoiceNumber })
+      .from(invoiceItemTimeEntries)
+      .innerJoin(invoiceItems, eq(invoiceItemTimeEntries.invoiceItemId, invoiceItems.id))
+      .innerJoin(invoices, eq(invoiceItems.invoiceId, invoices.id))
+      .where(and(inArray(invoiceItemTimeEntries.timeEntryId, ids), eq(invoices.userId, this.ownerId), ne(invoices.status, "void")));
+    return new Map(rows.map((row) => [row.timeEntryId, { id: row.id, invoiceNumber: row.invoiceNumber }]));
   }
 
   private async validateHierarchy(input: SharedReportFilters): Promise<void> {
@@ -318,31 +353,6 @@ function groupDefinition(groupBy: ReportGroupBy): GroupDefinition {
     label: clients.name,
     secondaryLabel: sql<string | null>`null`,
     dimensions: [clients.id, clients.name],
-  };
-}
-
-function emptySummary(input: ReportSummaryQuery): ReportSummaryResponse {
-  return {
-    range: { from: input.from, to: input.to },
-    totalTrackedSeconds: 0,
-    billableSeconds: 0,
-    nonBillableSeconds: 0,
-    billableTotals: [],
-    groupBy: input.groupBy,
-    groups: [],
-    hoursByDay: [],
-    hoursByProject: [],
-  };
-}
-
-function emptyDetailed(input: ReportDetailedQuery): ReportDetailedResponse {
-  return {
-    range: { from: input.from, to: input.to },
-    entries: [],
-    page: input.page,
-    pageSize: input.pageSize,
-    total: 0,
-    totalPages: 0,
   };
 }
 

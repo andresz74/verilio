@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { TimeEntryDto } from "@verilio/contracts";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
@@ -14,7 +15,7 @@ const taskId = "33333333-3333-4333-8333-333333333333";
 const rangeId = "44444444-4444-4444-8444-444444444444";
 const durationId = "55555555-5555-4555-8555-555555555555";
 
-const rangeEntry = {
+const rangeEntry: TimeEntryDto = {
   id: rangeId,
   clientId,
   clientName: "Archived Acme",
@@ -31,6 +32,7 @@ const rangeEntry = {
   billable: true,
   hourlyRate: "100.0000",
   currency: "USD",
+  invoice: null,
   createdAt: "2026-09-06T05:00:00.000Z",
   updatedAt: "2026-09-06T05:00:00.000Z",
 };
@@ -46,6 +48,7 @@ const durationEntry = {
   billable: false,
   hourlyRate: null,
   currency: null,
+  invoice: null,
 };
 
 function baseHandlers() {
@@ -114,6 +117,17 @@ describe("TimesheetPage", () => {
     expect(screen.getByText("Duration only")).toBeVisible();
     expect(screen.getAllByText("Not invoiced")).toHaveLength(2);
     expect(screen.getByText("2h 30m")).toBeVisible();
+  });
+
+  it("shows Draft-reserved Time with navigation to its Invoice and no edit actions", async () => {
+    baseHandlers();
+    server.use(http.get("/api/v1/time-entries", () => HttpResponse.json(response([{ ...rangeEntry, invoice: { id: "66666666-6666-4666-8666-666666666666", invoiceNumber: "INV-7" } }]))));
+    renderPage();
+    const link = await screen.findByRole("link", { name: "View INV-7" });
+    expect(link).toHaveAttribute("href", "/invoices/66666666-6666-4666-8666-666666666666");
+    expect(screen.getByText("Invoiced")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
   });
 
   it("keeps range and search state in the URL", async () => {

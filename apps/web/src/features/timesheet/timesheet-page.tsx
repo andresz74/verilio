@@ -298,7 +298,7 @@ function TimeEntryRow({ entry, onDelete, onEdit, timezone }: { entry: TimeEntryD
         <p className="mb-0 mt-1 text-xs text-[var(--color-text-secondary)]">{hierarchyLabel(entry)}</p>
         <div className="mt-2 flex flex-wrap gap-2">
           <StatusBadge tone={entry.billable ? "success" : "neutral"}>{entry.billable ? "Billable" : "Non-billable"}</StatusBadge>
-          <StatusBadge tone="neutral">Not invoiced</StatusBadge>
+          <StatusBadge tone={entry.invoice ? "info" : "neutral"}>{entry.invoice ? "Invoiced" : "Not invoiced"}</StatusBadge>
           <StatusBadge tone="neutral">{entry.mode === "duration" ? "Duration" : entry.mode === "timer" ? "Timer" : "Range"}</StatusBadge>
         </div>
       </div>
@@ -307,8 +307,11 @@ function TimeEntryRow({ entry, onDelete, onEdit, timezone }: { entry: TimeEntryD
         <strong className="mt-1 block text-base tabular-nums">{formatDuration(entry.durationSeconds)}</strong>
       </div>
       <div className="flex gap-2 md:justify-end">
-        <Button size="sm" variant="secondary" onClick={() => onEdit(entry)}>Edit</Button>
-        <Button size="sm" variant="quiet" onClick={() => onDelete(entry)}>Delete</Button>
+        {entry.invoice ? (
+          <Link className="inline-flex min-h-8 items-center rounded-[var(--radius-md)] px-3 text-sm font-semibold text-[var(--color-accent-active)] underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-border-focus)]" to={`/invoices/${entry.invoice.id}`}>View {entry.invoice.invoiceNumber}</Link>
+        ) : (
+          <><Button size="sm" variant="secondary" onClick={() => onEdit(entry)}>Edit</Button><Button size="sm" variant="quiet" onClick={() => onDelete(entry)}>Delete</Button></>
+        )}
       </div>
     </article>
   );

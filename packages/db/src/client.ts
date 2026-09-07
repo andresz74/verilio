@@ -5,6 +5,7 @@ import { Pool } from "pg";
 import * as schema from "./schema.js";
 
 export type VerilioDatabase = NodePgDatabase<typeof schema>;
+export type VerilioTransaction = Parameters<Parameters<VerilioDatabase["transaction"]>[0]>[0];
 
 export function createDatabaseClient(databaseUrl: string) {
   const pool = new Pool({ connectionString: databaseUrl });
@@ -16,4 +17,3 @@ export function createDatabaseClient(databaseUrl: string) {
 export async function checkDatabaseConnection(db: VerilioDatabase): Promise<void> {
   await db.execute(sql`select 1`);
 }
-
