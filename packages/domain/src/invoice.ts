@@ -4,6 +4,7 @@ import { roundMoney, type DecimalInput } from "./money.js";
 
 export type InvoiceDiscountType = "none" | "percentage" | "fixed";
 export type InvoiceStatus = "draft" | "sent" | "paid" | "void";
+export type InvoiceDisplayStatus = InvoiceStatus | "overdue";
 export type InvoiceGrouping = "project" | "task" | "individual";
 
 export type InvoiceCalculation = {
@@ -153,4 +154,15 @@ const allowedTransitions: Record<InvoiceStatus, InvoiceStatus[]> = {
 
 export function canTransitionInvoice(from: InvoiceStatus, to: InvoiceStatus): boolean {
   return allowedTransitions[from].includes(to);
+}
+
+export function deriveInvoiceDisplayStatus(input: {
+  status: InvoiceStatus;
+  dueDate: string;
+  paidAt: string | null;
+  currentBusinessDate: string;
+}): InvoiceDisplayStatus {
+  return input.status === "sent" && input.paidAt === null && input.dueDate < input.currentBusinessDate
+    ? "overdue"
+    : input.status;
 }

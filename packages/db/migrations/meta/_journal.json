@@ -50,6 +50,13 @@
       "when": 1788739682822,
       "tag": "0006_sad_prima",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1788748221400,
+      "tag": "0007_remarkable_bastion",
+      "breakpoints": true
     }
   ]
 }

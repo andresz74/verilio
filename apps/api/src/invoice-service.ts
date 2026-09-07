@@ -6,6 +6,8 @@ import type {
   InvoiceDto,
   InvoiceListItem,
   InvoiceManualItemInput,
+  InvoiceMarkPaidInput,
+  InvoicePresentationModel,
   InvoiceUpdateInput,
 } from "@verilio/contracts";
 import type { VerilioDatabase, VerilioTransaction } from "@verilio/db";
@@ -23,10 +25,14 @@ import {
   calculateHistoricalTimeAmount,
   calculateInvoice,
   calculateInvoiceLineAmount,
+  canTransitionInvoice,
+  deriveInvoiceDisplayStatus,
   groupInvoiceTime,
   roundMoney,
   sumMoney,
+  workDateFromInstant,
 } from "@verilio/domain";
+import { buildInvoicePresentationModel, renderInvoicePdf } from "@verilio/invoice-pdf";
 import {
   and,
   asc,
@@ -57,6 +63,11 @@ export interface InvoiceServiceContract {
   addManualItem(id: string, input: InvoiceManualItemInput): Promise<InvoiceDto | null>;
   updateManualItem(id: string, itemId: string, input: InvoiceManualItemInput): Promise<InvoiceDto | null>;
   removeItem(id: string, itemId: string): Promise<InvoiceDto | null>;
+  presentation(id: string): Promise<InvoicePresentationModel | null>;
+  pdf(id: string): Promise<{ buffer: Buffer; filename: string } | null>;
+  markSent(id: string): Promise<InvoiceDto | null>;
+  markPaid(id: string, input: InvoiceMarkPaidInput): Promise<InvoiceDto | null>;
+  void(id: string): Promise<InvoiceDto | null>;
 }
 
 export class InvoiceService implements InvoiceServiceContract {
@@ -64,6 +75,7 @@ export class InvoiceService implements InvoiceServiceContract {
     private readonly db: VerilioDatabase,
     private readonly ownerId = LOCAL_USER_ID,
     private readonly clock: () => Date = () => new Date(),
+    private readonly pdfRenderer: (model: InvoicePresentationModel) => Promise<Buffer> = renderInvoicePdf,
   ) {}
 
   async list(): Promise<InvoiceListItem[]> {
@@ -141,6 +153,8 @@ export class InvoiceService implements InvoiceServiceContract {
             taxAmount: calculation.taxAmount,
             total: calculation.total,
             notes: emptyToNull(input.notes),
+            paymentTermsDays: profile.paymentTermsDays,
+            footer: profile.invoiceFooter,
             updatedAt: this.clock(),
           })
           .returning({ id: invoices.id });
@@ -343,6 +357,53 @@ export class InvoiceService implements InvoiceServiceContract {
     return found ? this.loadDtoRequired(id) : null;
   }
 
+  async presentation(id: string): Promise<InvoicePresentationModel | null> {
+    const invoice = await this.loadDto(id);
+    return invoice ? buildInvoicePresentationModel(invoice) : null;
+  }
+
+  async pdf(id: string): Promise<{ buffer: Buffer; filename: string } | null> {
+    const invoice = await this.loadDto(id);
+    if (!invoice) return null;
+    validateInvoiceReady(invoice);
+    const buffer = await this.pdfRenderer(buildInvoicePresentationModel(invoice));
+    return { buffer, filename: `${safeFilename(invoice.invoiceNumber)}.pdf` };
+  }
+
+  async markSent(id: string): Promise<InvoiceDto | null> {
+    const found = await this.db.transaction(async (tx) => {
+      const invoice = await this.lockOwnedInvoice(tx, id);
+      if (!invoice) return false;
+      requireTransition(invoice, "sent");
+      await this.validatePersistedInvoiceReady(tx, invoice);
+      await tx.update(invoices).set({ status: "sent", updatedAt: this.clock() }).where(eq(invoices.id, id));
+      return true;
+    });
+    return found ? this.loadDtoRequired(id) : null;
+  }
+
+  async markPaid(id: string, input: InvoiceMarkPaidInput): Promise<InvoiceDto | null> {
+    const found = await this.db.transaction(async (tx) => {
+      const invoice = await this.lockOwnedInvoice(tx, id);
+      if (!invoice) return false;
+      requireTransition(invoice, "paid");
+      await tx.update(invoices).set({ status: "paid", paidAt: input.paidAt, updatedAt: this.clock() }).where(eq(invoices.id, id));
+      return true;
+    });
+    return found ? this.loadDtoRequired(id) : null;
+  }
+
+  async void(id: string): Promise<InvoiceDto | null> {
+    const found = await this.db.transaction(async (tx) => {
+      const invoice = await this.lockOwnedInvoice(tx, id);
+      if (!invoice) return false;
+      requireTransition(invoice, "void");
+      await tx.update(invoices).set({ status: "void", updatedAt: this.clock() }).where(eq(invoices.id, id));
+      return true;
+    });
+    return found ? this.loadDtoRequired(id) : null;
+  }
+
   private async lockOwnedInvoice(tx: VerilioTransaction, id: string): Promise<InvoiceRow | null> {
     const [row] = await tx.select().from(invoices).where(and(eq(invoices.id, id), eq(invoices.userId, this.ownerId))).limit(1).for("update");
     return row ?? null;
@@ -382,6 +443,25 @@ export class InvoiceService implements InvoiceServiceContract {
     await tx.update(invoices).set({ subtotal: calculation.subtotal, discountAmount: calculation.discountAmount, taxAmount: calculation.taxAmount, total: calculation.total, updatedAt: this.clock() }).where(eq(invoices.id, invoice.id));
   }
 
+  private async validatePersistedInvoiceReady(tx: VerilioTransaction, invoice: InvoiceRow): Promise<void> {
+    const items = await tx.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, invoice.id)).orderBy(asc(invoiceItems.sortOrder), asc(invoiceItems.id));
+    const calculation = calculateOrThrow({
+      currency: invoice.currency,
+      lines: items.map((item) => ({ quantity: item.quantity, unitPrice: item.unitPrice })),
+      discountType: invoice.discountType as "none" | "percentage" | "fixed",
+      discountValue: invoice.discountValue,
+      taxPercent: invoice.taxPercent,
+    });
+    if (!items.length ||
+      items.some((item, index) => roundMoney(item.amount, invoice.currency) !== calculation.lineAmounts[index]) ||
+      roundMoney(invoice.subtotal, invoice.currency) !== calculation.subtotal ||
+      roundMoney(invoice.discountAmount, invoice.currency) !== calculation.discountAmount ||
+      roundMoney(invoice.taxAmount, invoice.currency) !== calculation.taxAmount ||
+      roundMoney(invoice.total, invoice.currency) !== calculation.total) {
+      throw new ApiError(409, "INVOICE_CALCULATION_ERROR", "Add at least one valid Item and save authoritative totals before continuing.");
+    }
+  }
+
   private async loadDtoRequired(id: string): Promise<InvoiceDto> {
     const invoice = await this.loadDto(id);
     if (!invoice) throw new Error("Invoice could not be loaded");
@@ -391,6 +471,9 @@ export class InvoiceService implements InvoiceServiceContract {
   private async loadDto(id: string): Promise<InvoiceDto | null> {
     const row = await this.loadOwnedRow(id);
     if (!row) return null;
+    const [profile] = await this.db.select({ timezone: businessProfiles.timezone }).from(businessProfiles).where(eq(businessProfiles.userId, this.ownerId)).limit(1);
+    if (!profile) throw new ApiError(409, "SETTINGS_REQUIRED", "Business settings are required to display an Invoice.");
+    const currentBusinessDate = workDateFromInstant(this.clock(), profile.timezone);
     const items = await this.db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, id)).orderBy(asc(invoiceItems.sortOrder), asc(invoiceItems.id));
     const itemDtos = await Promise.all(items.map((item) => this.itemDto(item)));
     const calculation = calculateOrThrow({
@@ -406,6 +489,12 @@ export class InvoiceService implements InvoiceServiceContract {
       clientId: row.clientId,
       clientName: row.clientSnapshot.name,
       status: row.status as InvoiceDto["status"],
+      displayStatus: deriveInvoiceDisplayStatus({
+        status: row.status as InvoiceDto["status"],
+        dueDate: row.dueDate,
+        paidAt: row.paidAt,
+        currentBusinessDate,
+      }),
       currency: row.currency,
       issueDate: row.issueDate,
       dueDate: row.dueDate,
@@ -421,6 +510,8 @@ export class InvoiceService implements InvoiceServiceContract {
       taxAmount: roundMoney(row.taxAmount, row.currency),
       total: roundMoney(row.total, row.currency),
       notes: row.notes,
+      paymentTermsDays: row.paymentTermsDays,
+      footer: row.footer,
       items: itemDtos,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
@@ -469,7 +560,36 @@ function sourceDto(entry: typeof timeEntries.$inferSelect, projectName: string, 
 }
 
 function requireDraft(invoice: InvoiceRow): void {
-  if (invoice.status !== "draft") throw new ApiError(409, "INVOICE_STATE_INVALID", "Only Draft Invoices can be edited in M7.");
+  if (invoice.status !== "draft") throw new ApiError(409, "INVOICE_STATE_INVALID", "Only Draft Invoices can be edited.");
+}
+
+function requireTransition(invoice: InvoiceRow, next: "sent" | "paid" | "void"): void {
+  if (!canTransitionInvoice(invoice.status as InvoiceDto["status"], next)) {
+    throw new ApiError(409, "INVOICE_STATE_INVALID", `A ${invoice.status} Invoice cannot transition to ${next}.`);
+  }
+}
+
+function validateInvoiceReady(invoice: InvoiceDto): void {
+  if (!invoice.items.length) {
+    throw new ApiError(409, "INVOICE_CALCULATION_ERROR", "Add at least one valid Item before generating a PDF.");
+  }
+  const calculation = calculateOrThrow({
+    currency: invoice.currency,
+    lines: invoice.items.map((item) => ({ quantity: item.quantity, unitPrice: item.unitPrice })),
+    discountType: invoice.discountType,
+    discountValue: invoice.discountValue,
+    taxPercent: invoice.taxPercent,
+  });
+  if (invoice.items.some((item, index) => roundMoney(item.amount, invoice.currency) !== calculation.lineAmounts[index]) ||
+    invoice.subtotal !== calculation.subtotal || invoice.discountAmount !== calculation.discountAmount ||
+    invoice.taxAmount !== calculation.taxAmount || invoice.total !== calculation.total) {
+    throw new ApiError(409, "INVOICE_CALCULATION_ERROR", "Invoice totals are not internally valid.");
+  }
+}
+
+function safeFilename(invoiceNumber: string): string {
+  const value = invoiceNumber.trim().replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  return value ? `invoice-${value}` : "invoice";
 }
 
 function calculateOrThrow(input: Parameters<typeof calculateInvoice>[0]) {

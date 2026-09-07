@@ -4,6 +4,7 @@ import {
   calculateInvoice,
   calculateInvoiceLineAmount,
   canTransitionInvoice,
+  deriveInvoiceDisplayStatus,
   durationSecondsToInvoiceQuantity,
   groupInvoiceTime,
 } from "../src/index.js";
@@ -74,8 +75,23 @@ describe("invoice time grouping", () => {
 describe("invoice state foundation", () => {
   it("permits only approved transitions and keeps Paid/Void terminal", () => {
     expect(canTransitionInvoice("draft", "sent")).toBe(true);
+    expect(canTransitionInvoice("draft", "void")).toBe(true);
     expect(canTransitionInvoice("sent", "paid")).toBe(true);
+    expect(canTransitionInvoice("sent", "void")).toBe(true);
+    expect(canTransitionInvoice("draft", "paid")).toBe(false);
+    expect(canTransitionInvoice("sent", "sent")).toBe(false);
+    expect(canTransitionInvoice("paid", "void")).toBe(false);
     expect(canTransitionInvoice("paid", "draft")).toBe(false);
+    expect(canTransitionInvoice("void", "sent")).toBe(false);
+    expect(canTransitionInvoice("void", "paid")).toBe(false);
     expect(canTransitionInvoice("void", "draft")).toBe(false);
+  });
+
+  it("derives Overdue only after the due date in the current Business date", () => {
+    expect(deriveInvoiceDisplayStatus({ status: "sent", dueDate: "2026-09-05", paidAt: null, currentBusinessDate: "2026-09-06" })).toBe("overdue");
+    expect(deriveInvoiceDisplayStatus({ status: "sent", dueDate: "2026-09-06", paidAt: null, currentBusinessDate: "2026-09-06" })).toBe("sent");
+    expect(deriveInvoiceDisplayStatus({ status: "sent", dueDate: "2026-09-07", paidAt: null, currentBusinessDate: "2026-09-06" })).toBe("sent");
+    expect(deriveInvoiceDisplayStatus({ status: "paid", dueDate: "2026-09-05", paidAt: "2026-09-06", currentBusinessDate: "2026-09-07" })).toBe("paid");
+    expect(deriveInvoiceDisplayStatus({ status: "void", dueDate: "2026-09-05", paidAt: null, currentBusinessDate: "2026-09-07" })).toBe("void");
   });
 });

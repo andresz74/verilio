@@ -6,6 +6,8 @@ import {
   InvoiceCreateInputSchema,
   InvoiceListResponseSchema,
   InvoiceManualItemInputSchema,
+  InvoiceMarkPaidInputSchema,
+  InvoicePresentationResponseSchema,
   InvoiceResponseSchema,
   InvoiceUpdateInputSchema,
   type EligibleTimeQuery,
@@ -14,6 +16,8 @@ import {
   type InvoiceCreateInput,
   type InvoiceListResponse,
   type InvoiceManualItemInput,
+  type InvoiceMarkPaidInput,
+  type InvoicePresentationResponse,
   type InvoiceResponse,
   type InvoiceUpdateInput,
 } from "@verilio/contracts";
@@ -22,6 +26,7 @@ export const invoiceKeys = {
   all: ["invoices"] as const,
   list: ["invoices", "list"] as const,
   detail: (id: string) => ["invoices", "detail", id] as const,
+  presentation: (id: string) => ["invoices", "presentation", id] as const,
   eligible: (id: string, query: EligibleTimeQuery) => ["invoices", "eligible", id, query] as const,
 };
 
@@ -42,6 +47,10 @@ export function getInvoices(): Promise<InvoiceListResponse> {
 
 export function getInvoice(id: string): Promise<InvoiceResponse> {
   return request(`/api/v1/invoices/${id}`, InvoiceResponseSchema, "Invoice could not be loaded.");
+}
+
+export function getInvoicePresentation(id: string): Promise<InvoicePresentationResponse> {
+  return request(`/api/v1/invoices/${id}/presentation`, InvoicePresentationResponseSchema, "Invoice preview could not be loaded.");
 }
 
 export function createInvoice(input: InvoiceCreateInput): Promise<InvoiceResponse> {
@@ -71,6 +80,18 @@ export function updateManualInvoiceItem(id: string, itemId: string, input: Invoi
 
 export async function removeInvoiceItem(id: string, itemId: string): Promise<InvoiceResponse> {
   return request(`/api/v1/invoices/${id}/items/${itemId}`, InvoiceResponseSchema, "Invoice Item could not be removed.", { method: "DELETE" });
+}
+
+export function markInvoiceSent(id: string): Promise<InvoiceResponse> {
+  return mutation(`/api/v1/invoices/${id}/mark-sent`, "POST", {});
+}
+
+export function markInvoicePaid(id: string, input: InvoiceMarkPaidInput): Promise<InvoiceResponse> {
+  return mutation(`/api/v1/invoices/${id}/mark-paid`, "POST", InvoiceMarkPaidInputSchema.parse(input));
+}
+
+export function voidInvoice(id: string): Promise<InvoiceResponse> {
+  return mutation(`/api/v1/invoices/${id}/void`, "POST", {});
 }
 
 function mutation(url: string, method: "POST" | "PATCH", body: unknown): Promise<InvoiceResponse> {

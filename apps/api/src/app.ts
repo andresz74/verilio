@@ -104,7 +104,7 @@ export function buildApp({
       });
     }
 
-    request.log.error({ error }, "Unhandled API error");
+    request.log.error({ err: error }, "Unhandled API error");
     return reply.status(500).send({
       error: {
         code: "INTERNAL_ERROR",

@@ -316,6 +316,8 @@ export const invoices = pgTable(
     taxAmount: numeric("tax_amount", { precision: 18, scale: 4 }).notNull().default("0"),
     total: numeric("total", { precision: 18, scale: 4 }).notNull().default("0"),
     notes: text("notes"),
+    paymentTermsDays: integer("payment_terms_days").notNull().default(30),
+    footer: text("footer"),
     createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -343,6 +345,7 @@ export const invoices = pgTable(
     check("invoices_discount_not_above_subtotal", sql`${table.discountAmount} <= ${table.subtotal}`),
     check("invoices_tax_percent_range", sql`${table.taxPercent} >= 0 AND ${table.taxPercent} <= 100`),
     check("invoices_percentage_discount_range", sql`${table.discountType} <> 'percentage' OR ${table.discountValue} <= 100`),
+    check("invoices_payment_terms_nonnegative", sql`${table.paymentTermsDays} >= 0`),
     check("invoices_paid_date_valid", sql`(${table.status} = 'paid' AND ${table.paidAt} IS NOT NULL) OR (${table.status} <> 'paid' AND ${table.paidAt} IS NULL)`),
   ],
 );

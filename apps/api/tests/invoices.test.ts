@@ -1,6 +1,7 @@
 import type {
   EligibleTimeResponse,
   InvoiceDto,
+  InvoicePresentationModel,
 } from "@verilio/contracts";
 import type { VerilioDatabase } from "@verilio/db";
 import { describe, expect, it, vi } from "vitest";
@@ -20,6 +21,7 @@ const invoice: InvoiceDto = {
   clientId,
   clientName: "Acme",
   status: "draft",
+  displayStatus: "draft",
   currency: "USD",
   issueDate: "2026-09-06",
   dueDate: "2026-10-06",
@@ -35,6 +37,8 @@ const invoice: InvoiceDto = {
   taxAmount: "0.00",
   total: "0.00",
   notes: null,
+  paymentTermsDays: 30,
+  footer: null,
   items: [],
   createdAt: "2026-09-06T12:00:00.000Z",
   updatedAt: "2026-09-06T12:00:00.000Z",
@@ -47,6 +51,31 @@ const eligible: EligibleTimeResponse = {
   count: 0,
   totalDurationSeconds: 0,
   totalAmount: "0.00",
+};
+
+const presentation: InvoicePresentationModel = {
+  invoiceNumber: invoice.invoiceNumber,
+  status: invoice.status,
+  displayStatus: invoice.displayStatus,
+  currency: invoice.currency,
+  issueDate: invoice.issueDate,
+  dueDate: invoice.dueDate,
+  paidAt: invoice.paidAt,
+  seller: invoice.sellerSnapshot,
+  client: invoice.clientSnapshot,
+  items: [],
+  subtotal: invoice.subtotal,
+  discountType: invoice.discountType,
+  discountValue: invoice.discountValue,
+  discountAmount: invoice.discountAmount,
+  taxableSubtotal: invoice.taxableSubtotal,
+  taxPercent: invoice.taxPercent,
+  taxAmount: invoice.taxAmount,
+  total: invoice.total,
+  notes: invoice.notes,
+  paymentTermsDays: invoice.paymentTermsDays,
+  paymentTermsLabel: "Payment due within 30 days",
+  footer: invoice.footer,
 };
 
 const draftInput = {
@@ -71,6 +100,11 @@ function service(): InvoiceServiceContract {
     addManualItem: vi.fn().mockResolvedValue(invoice),
     updateManualItem: vi.fn().mockResolvedValue(invoice),
     removeItem: vi.fn().mockResolvedValue(invoice),
+    presentation: vi.fn().mockResolvedValue(presentation),
+    pdf: vi.fn().mockResolvedValue({ buffer: Buffer.from("%PDF-test"), filename: "invoice-INV-1.pdf" }),
+    markSent: vi.fn().mockResolvedValue(invoice),
+    markPaid: vi.fn().mockResolvedValue(invoice),
+    void: vi.fn().mockResolvedValue(invoice),
   };
 }
 
@@ -83,6 +117,11 @@ describe("invoice routes", () => {
     expect((await app.inject({ method: "POST", url: "/api/v1/invoices", payload: draftInput })).statusCode).toBe(201);
     expect(invoiceService.create).toHaveBeenCalledWith(draftInput);
     expect((await app.inject({ method: "GET", url: `/api/v1/invoices/${invoiceId}` })).statusCode).toBe(200);
+    expect((await app.inject({ method: "GET", url: `/api/v1/invoices/${invoiceId}/presentation` })).json()).toEqual({ presentation });
+    const pdf = await app.inject({ method: "GET", url: `/api/v1/invoices/${invoiceId}/pdf` });
+    expect(pdf.statusCode).toBe(200);
+    expect(pdf.headers["content-type"]).toBe("application/pdf");
+    expect(pdf.headers["content-disposition"]).toBe('attachment; filename="invoice-INV-1.pdf"');
     expect((await app.inject({ method: "PATCH", url: `/api/v1/invoices/${invoiceId}`, payload: { ...draftInput, taxPercent: "6" } })).statusCode).toBe(200);
     expect((await app.inject({ method: "GET", url: `/api/v1/invoices/${invoiceId}/eligible-time?from=2026-09-01&to=2026-09-30` })).statusCode).toBe(200);
     expect(invoiceService.eligibleTime).toHaveBeenCalledWith(invoiceId, { from: "2026-09-01", to: "2026-09-30" });
@@ -91,6 +130,10 @@ describe("invoice routes", () => {
     expect((await app.inject({ method: "POST", url: `/api/v1/invoices/${invoiceId}/items`, payload: { description: "Consulting", quantity: "2", unitPrice: "100" } })).statusCode).toBe(201);
     expect((await app.inject({ method: "PATCH", url: `/api/v1/invoices/${invoiceId}/items/${itemId}`, payload: { description: "Consulting", quantity: "3", unitPrice: "100" } })).statusCode).toBe(200);
     expect((await app.inject({ method: "DELETE", url: `/api/v1/invoices/${invoiceId}/items/${itemId}` })).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: `/api/v1/invoices/${invoiceId}/mark-sent` })).statusCode).toBe(200);
+    expect((await app.inject({ method: "POST", url: `/api/v1/invoices/${invoiceId}/mark-paid`, payload: { paidAt: "2026-09-06" } })).statusCode).toBe(200);
+    expect(invoiceService.markPaid).toHaveBeenCalledWith(invoiceId, { paidAt: "2026-09-06" });
+    expect((await app.inject({ method: "POST", url: `/api/v1/invoices/${invoiceId}/void` })).statusCode).toBe(200);
     await app.close();
   });
 
@@ -106,15 +149,20 @@ describe("invoice routes", () => {
     expect(importResponse.statusCode).toBe(400);
     expect(importResponse.json()).toMatchObject({ error: { code: "VALIDATION_ERROR" } });
     expect(invoiceService.importTime).not.toHaveBeenCalled();
+    const paid = await app.inject({ method: "POST", url: `/api/v1/invoices/${invoiceId}/mark-paid`, payload: { paidAt: "09/06/2026" } });
+    expect(paid.statusCode).toBe(400);
+    expect(invoiceService.markPaid).not.toHaveBeenCalled();
     await app.close();
   });
 
   it("maps missing Invoices and stable reservation conflicts", async () => {
     const invoiceService = service();
     vi.mocked(invoiceService.get).mockResolvedValue(null);
+    vi.mocked(invoiceService.pdf).mockResolvedValue(null);
     vi.mocked(invoiceService.importTime).mockRejectedValue(new ApiError(409, "TIME_ENTRY_ALREADY_INVOICED", "Time is already reserved."));
     const app = buildApp({ db: {} as VerilioDatabase, logger: false, invoiceService });
     expect((await app.inject({ method: "GET", url: `/api/v1/invoices/${invoiceId}` })).statusCode).toBe(404);
+    expect((await app.inject({ method: "GET", url: `/api/v1/invoices/${invoiceId}/pdf` })).statusCode).toBe(404);
     const response = await app.inject({ method: "POST", url: `/api/v1/invoices/${invoiceId}/import-time`, payload: { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entryId], grouping: "individual" } });
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({ error: { code: "TIME_ENTRY_ALREADY_INVOICED" } });

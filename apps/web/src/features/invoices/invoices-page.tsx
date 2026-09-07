@@ -25,7 +25,7 @@ export function InvoicesPage() {
             <table className="w-full min-w-[760px] border-collapse text-sm">
               <thead className="bg-[var(--color-bg-subtle)] text-left text-xs uppercase tracking-wide text-[var(--color-text-muted)]"><tr><th className="px-4 py-3">Invoice</th><th className="px-4 py-3">Client</th><th className="px-4 py-3">Issue date</th><th className="px-4 py-3">Due date</th><th className="px-4 py-3 text-right">Total</th><th className="px-4 py-3">Status</th></tr></thead>
               <tbody className="divide-y divide-[var(--color-border-default)]">
-                {query.data.invoices.map((invoice) => <tr key={invoice.id}><th scope="row" className="px-4 py-3 text-left"><Link className="font-semibold text-[var(--color-accent-active)] underline" to={`/invoices/${invoice.id}`}>{invoice.invoiceNumber}</Link></th><td className="px-4 py-3">{invoice.clientName}</td><td className="px-4 py-3">{formatWorkDate(invoice.issueDate, "short")}</td><td className="px-4 py-3">{formatWorkDate(invoice.dueDate, "short")}</td><td className="px-4 py-3 text-right font-semibold tabular-nums">{invoice.currency} {formatMoney(invoice.total, invoice.currency)}</td><td className="px-4 py-3"><StatusBadge tone="info">Draft</StatusBadge></td></tr>)}
+                {query.data.invoices.map((invoice) => <tr key={invoice.id}><th scope="row" className="px-4 py-3 text-left"><Link className="font-semibold text-[var(--color-accent-active)] underline" to={`/invoices/${invoice.id}`}>{invoice.invoiceNumber}</Link></th><td className="px-4 py-3">{invoice.clientName}</td><td className="px-4 py-3">{formatWorkDate(invoice.issueDate, "short")}</td><td className="px-4 py-3">{formatWorkDate(invoice.dueDate, "short")}</td><td className="px-4 py-3 text-right font-semibold tabular-nums">{invoice.currency} {formatMoney(invoice.total, invoice.currency)}</td><td className="px-4 py-3"><StatusBadge tone={statusTone(invoice.displayStatus)}>{statusLabel(invoice.displayStatus)}</StatusBadge>{invoice.paidAt ? <span className="ml-2 text-xs text-[var(--color-text-muted)]">{formatWorkDate(invoice.paidAt, "short")}</span> : null}</td></tr>)}
               </tbody>
             </table>
           </div>
@@ -41,4 +41,12 @@ function LinkButton({ children, to }: { children: ReactNode; to: string }) {
 
 function formatMoney(amount: string, currency: string): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(amount));
+}
+
+function statusLabel(status: "draft" | "sent" | "overdue" | "paid" | "void"): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
+}
+
+function statusTone(status: "draft" | "sent" | "overdue" | "paid" | "void"): "neutral" | "info" | "success" | "warning" | "danger" {
+  return status === "paid" ? "success" : status === "overdue" ? "warning" : status === "void" ? "danger" : status === "sent" ? "info" : "neutral";
 }

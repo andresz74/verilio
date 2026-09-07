@@ -1,6 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "jsx": "react-jsx",
     "lib": ["ES2022"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
@@ -8,4 +9,3 @@
   },
   "include": ["src/**/*.ts", "tests/**/*.ts", "vitest*.ts"]
 }
-

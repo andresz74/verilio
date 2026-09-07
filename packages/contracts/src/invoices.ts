@@ -10,6 +10,8 @@ import {
 
 export const InvoiceStatusSchema = z.enum(["draft", "sent", "paid", "void"]);
 export type InvoiceStatus = z.infer<typeof InvoiceStatusSchema>;
+export const InvoiceDisplayStatusSchema = z.enum(["draft", "sent", "overdue", "paid", "void"]);
+export type InvoiceDisplayStatus = z.infer<typeof InvoiceDisplayStatusSchema>;
 export const InvoiceDiscountTypeSchema = z.enum(["none", "percentage", "fixed"]);
 export type InvoiceDiscountType = z.infer<typeof InvoiceDiscountTypeSchema>;
 export const InvoiceGroupingSchema = z.enum(["project", "task", "individual"]);
@@ -97,6 +99,7 @@ export const InvoiceDtoSchema = z.object({
   clientId: IdSchema,
   clientName: z.string(),
   status: InvoiceStatusSchema,
+  displayStatus: InvoiceDisplayStatusSchema,
   currency: CurrencyCodeSchema,
   issueDate: DateOnlySchema,
   dueDate: DateOnlySchema,
@@ -112,6 +115,8 @@ export const InvoiceDtoSchema = z.object({
   taxAmount: NonNegativeDecimalStringSchema,
   total: NonNegativeDecimalStringSchema,
   notes: z.string().nullable(),
+  paymentTermsDays: z.number().int().nonnegative(),
+  footer: z.string().nullable(),
   items: z.array(InvoiceItemDtoSchema),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -125,8 +130,49 @@ export type InvoiceListResponse = z.infer<typeof InvoiceListResponseSchema>;
 export const InvoiceResponseSchema = z.object({ invoice: InvoiceDtoSchema });
 export type InvoiceResponse = z.infer<typeof InvoiceResponseSchema>;
 
+export const InvoicePresentationItemSchema = InvoiceItemDtoSchema.pick({
+  id: true,
+  kind: true,
+  description: true,
+  quantity: true,
+  unitPrice: true,
+  amount: true,
+  sortOrder: true,
+});
+export const InvoicePresentationModelSchema = z.object({
+  invoiceNumber: z.string(),
+  status: InvoiceStatusSchema,
+  displayStatus: InvoiceDisplayStatusSchema,
+  currency: CurrencyCodeSchema,
+  issueDate: DateOnlySchema,
+  dueDate: DateOnlySchema,
+  paidAt: DateOnlySchema.nullable(),
+  seller: InvoiceSellerSnapshotSchema,
+  client: InvoiceClientSnapshotSchema,
+  items: z.array(InvoicePresentationItemSchema),
+  subtotal: NonNegativeDecimalStringSchema,
+  discountType: InvoiceDiscountTypeSchema,
+  discountValue: NonNegativeDecimalStringSchema,
+  discountAmount: NonNegativeDecimalStringSchema,
+  taxableSubtotal: NonNegativeDecimalStringSchema,
+  taxPercent: NonNegativeDecimalStringSchema,
+  taxAmount: NonNegativeDecimalStringSchema,
+  total: NonNegativeDecimalStringSchema,
+  notes: z.string().nullable(),
+  paymentTermsDays: z.number().int().nonnegative(),
+  paymentTermsLabel: z.string(),
+  footer: z.string().nullable(),
+});
+export type InvoicePresentationModel = z.infer<typeof InvoicePresentationModelSchema>;
+export const InvoicePresentationResponseSchema = z.object({
+  presentation: InvoicePresentationModelSchema,
+});
+export type InvoicePresentationResponse = z.infer<typeof InvoicePresentationResponseSchema>;
+
 export const InvoiceIdParamsSchema = z.object({ id: IdSchema });
 export const InvoiceItemParamsSchema = z.object({ id: IdSchema, itemId: IdSchema });
+export const InvoiceMarkPaidInputSchema = z.object({ paidAt: DateOnlySchema });
+export type InvoiceMarkPaidInput = z.infer<typeof InvoiceMarkPaidInputSchema>;
 export const EligibleTimeQuerySchema = z.object({ from: DateOnlySchema, to: DateOnlySchema }).refine(({ from, to }) => from <= to, { path: ["to"], message: "End date must be on or after start date" });
 export type EligibleTimeQuery = z.infer<typeof EligibleTimeQuerySchema>;
 export const EligibleTimeResponseSchema = z.object({

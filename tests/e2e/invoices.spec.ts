@@ -1,6 +1,6 @@
 import { expect, test, type APIRequestContext, type APIResponse } from "@playwright/test";
 
-test("creates a traceable Draft and reserves/releases historical Time through the M7 exit gate", async ({ page, request }) => {
+test("completes Draft → PDF → Sent → Paid while preserving reserved historical Time", async ({ page, request }) => {
   test.setTimeout(60_000);
   const consoleProblems: string[] = [];
   page.on("console", (message) => {
@@ -111,17 +111,100 @@ test("creates a traceable Draft and reserves/releases historical Time through th
   expect((await eligibleTime(request, secondUsdInvoice, firstDate, secondDate)).count).toBe(0);
 
   await page.goto(`/invoices/${invoiceId}`);
-  const sourceRow = page.getByRole("row").filter({ hasText: firstDescription });
-  await sourceRow.getByRole("button", { name: "Remove" }).click();
-  dialog = page.getByRole("dialog", { name: new RegExp("Remove") });
-  await expect(dialog).toContainText("eligible again");
-  await dialog.getByRole("button", { name: "Remove Item" }).click();
-  await expect(dialog).not.toBeVisible();
-  const released = await eligibleTime(request, secondUsdInvoice, firstDate, secondDate);
-  expect(released.entries.map((entry: { id: string }) => entry.id)).toContain(firstEntryId);
+  await page.getByRole("button", { name: "Preview" }).click();
+  dialog = page.getByRole("dialog", { name: `Preview ${invoiceNumber}` });
+  await expect(dialog).toContainText(`M7 Studio ${suffix}`);
+  await expect(dialog).toContainText(clientName);
+  await expect(dialog).toContainText("USD $200.34");
+  await expect(dialog).toContainText("Payment due within 30 days");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  const downloadPromise = page.waitForEvent("download");
+  await page.getByRole("link", { name: "Download PDF" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe(`invoice-${invoiceNumber}.pdf`);
+  const pdfResponse = await request.get(`/api/v1/invoices/${invoiceId}/pdf`);
+  await expectOk(pdfResponse);
+  expect(pdfResponse.headers()["content-type"]).toBe("application/pdf");
+  expect((await pdfResponse.body()).subarray(0, 5).toString()).toBe("%PDF-");
 
-  await page.goto(`/reports/detailed?from=${firstDate}&to=${secondDate}&invoiceStatus=not-invoiced`);
+  await page.getByRole("button", { name: "Mark Sent" }).click();
+  dialog = page.getByRole("dialog", { name: `Mark ${invoiceNumber} as sent?` });
+  await expect(dialog).toContainText("will not email");
+  await dialog.getByRole("button", { name: "Mark Sent" }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByRole("button", { name: "Mark Paid" })).toBeVisible();
+  await expect(page.getByLabel("Notes")).toBeDisabled();
+
+  await page.getByRole("button", { name: "Mark Paid" }).click();
+  dialog = page.getByRole("dialog", { name: `Mark ${invoiceNumber} as paid?` });
+  await dialog.getByLabel("Paid date").fill(firstDate);
+  await dialog.getByRole("button", { name: "Mark Paid" }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByText(`Paid on ${firstDate}`)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Download PDF" })).toBeVisible();
+  expect((await eligibleTime(request, secondUsdInvoice, firstDate, secondDate)).count).toBe(0);
+  await page.goto(`/reports/detailed?from=${firstDate}&to=${secondDate}&invoiceStatus=invoiced`);
   await expect(page.getByRole("table")).toContainText(firstDescription);
+  await page.goto(`/timesheet?from=${firstDate}&to=${secondDate}`);
+  await expect(page.getByRole("link", { name: `View ${invoiceNumber}` }).first()).toBeVisible();
+  expect(firstEntryId).toBeTruthy();
+  expect(consoleProblems).toEqual([]);
+});
+
+test("Void preserves Invoice history, releases Time, and permits re-invoicing", async ({ page, request }) => {
+  test.setTimeout(60_000);
+  const consoleProblems: string[] = [];
+  page.on("console", (message) => {
+    if (["error", "warning"].includes(message.type())) consoleProblems.push(message.text());
+  });
+  const suffix = Date.now().toString().slice(-8);
+  const workDate = `33${suffix.slice(0, 2)}-${String((Number(suffix.slice(2, 4)) % 12) + 1).padStart(2, "0")}-15`;
+  const settingsResponse = await request.get("/api/v1/settings");
+  await expectOk(settingsResponse);
+  const current = (await settingsResponse.json() as { settings: Record<string, unknown> }).settings;
+  await expectOk(await request.put("/api/v1/settings", { data: {
+    ...current,
+    businessName: `M8 Void Studio ${suffix}`,
+    invoicePrefix: `V8-${suffix}-`,
+    defaultCurrency: "USD",
+    defaultHourlyRate: "80.0000",
+    paymentTermsDays: 14,
+    defaultTaxRate: "0",
+    defaultInvoiceNotes: "Void scenario",
+    invoiceFooter: "Saved M8 footer",
+    timezone: "America/New_York",
+  } }));
+  const clientId = await createClient(request, `M8 Void Client ${suffix}`, "USD");
+  const projectId = await createProject(request, clientId, `M8 Void Project ${suffix}`, "90.0000");
+  const entryId = await createDuration(request, { clientId, projectId, taskId: null, workDate, durationSeconds: 3_600, description: `Void source ${suffix}`, billable: true });
+  const invoiceId = await createInvoice(request, clientId, "USD", workDate);
+  const importResponse = await request.post(`/api/v1/invoices/${invoiceId}/import-time`, { data: { from: workDate, to: workDate, timeEntryIds: [entryId], grouping: "project" } });
+  await expectOk(importResponse);
+  const invoiceNumber = (await importResponse.json() as { invoice: { invoiceNumber: string } }).invoice.invoiceNumber;
+
+  await page.goto(`/invoices/${invoiceId}`);
+  await expect(page.getByText("View 1 source entry")).toBeVisible();
+  await page.getByRole("button", { name: "Mark Sent" }).click();
+  await page.getByRole("dialog", { name: `Mark ${invoiceNumber} as sent?` }).getByRole("button", { name: "Mark Sent" }).click();
+  await page.getByRole("button", { name: "Void Invoice" }).click();
+  const dialog = page.getByRole("dialog", { name: `Void ${invoiceNumber}?` });
+  await expect(dialog).toContainText("available to Invoice again");
+  await dialog.getByRole("button", { name: "Void Invoice" }).click();
+  await expect(page.getByText(/Void is terminal/)).toBeVisible();
+  await expect(page.getByText("View 1 source entry")).toBeVisible();
+  await expect(page.getByRole("heading", { name: invoiceNumber })).toBeVisible();
+
+  const replacementId = await createInvoice(request, clientId, "USD", workDate);
+  const released = await eligibleTime(request, replacementId, workDate, workDate);
+  expect(released.entries.map((entry) => entry.id)).toContain(entryId);
+  await expectOk(await request.post(`/api/v1/invoices/${replacementId}/import-time`, { data: { from: workDate, to: workDate, timeEntryIds: [entryId], grouping: "individual" } }));
+  const oldInvoice = await request.get(`/api/v1/invoices/${invoiceId}`);
+  await expectOk(oldInvoice);
+  expect((await oldInvoice.json() as { invoice: { invoiceNumber: string; status: string; items: Array<{ sources: Array<{ id: string }> }> } }).invoice).toMatchObject({ invoiceNumber, status: "void", items: [{ sources: [{ id: entryId }] }] });
+  await page.goto(`/reports/detailed?from=${workDate}&to=${workDate}&invoiceStatus=invoiced`);
+  await expect(page.getByRole("table")).toContainText(`Void source ${suffix}`);
+  await page.goto(`/timesheet?from=${workDate}&to=${workDate}`);
+  await expect(page.getByRole("link", { name: /^View V8-/ })).toBeVisible();
   expect(consoleProblems).toEqual([]);
 });
 

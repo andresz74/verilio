@@ -1792,6 +1792,8 @@ using a server-compatible React PDF renderer.
 
 The web invoice preview and PDF renderer should consume the same canonical invoice presentation DTO, even if they use separate rendering technologies.
 
+Invoice payment terms and footer text are saved on the Invoice at first Draft save, alongside the existing seller and Client snapshots. This keeps later preview/PDF output deterministic when Business settings change. The M8 migration backfills pre-M8 Drafts from the currently configured Business profile as a one-time best effort because their earlier settings history cannot be reconstructed.
+
 ---
 
 # 54. PDF Flow

@@ -5,6 +5,7 @@ import {
   InvoiceIdParamsSchema,
   InvoiceItemParamsSchema,
   InvoiceManualItemInputSchema,
+  InvoiceMarkPaidInputSchema,
   InvoiceUpdateInputSchema,
 } from "@verilio/contracts";
 import type { FastifyInstance } from "fastify";
@@ -24,6 +25,20 @@ export function registerInvoiceRoutes(app: FastifyInstance, service: InvoiceServ
   app.get("/api/v1/invoices/:id", async (request) => {
     const { id } = parseOrThrow(InvoiceIdParamsSchema.safeParse(request.params));
     return { invoice: requireInvoice(await service.get(id)) };
+  });
+
+  app.get("/api/v1/invoices/:id/presentation", async (request) => {
+    const { id } = parseOrThrow(InvoiceIdParamsSchema.safeParse(request.params));
+    return { presentation: requireInvoice(await service.presentation(id)) };
+  });
+
+  app.get("/api/v1/invoices/:id/pdf", async (request, reply) => {
+    const { id } = parseOrThrow(InvoiceIdParamsSchema.safeParse(request.params));
+    const pdf = requireInvoice(await service.pdf(id));
+    return reply
+      .header("Content-Type", "application/pdf")
+      .header("Content-Disposition", `attachment; filename="${pdf.filename}"`)
+      .send(pdf.buffer);
   });
 
   app.patch("/api/v1/invoices/:id", async (request) => {
@@ -59,6 +74,22 @@ export function registerInvoiceRoutes(app: FastifyInstance, service: InvoiceServ
   app.delete("/api/v1/invoices/:id/items/:itemId", async (request) => {
     const { id, itemId } = parseOrThrow(InvoiceItemParamsSchema.safeParse(request.params));
     return { invoice: requireInvoice(await service.removeItem(id, itemId)) };
+  });
+
+  app.post("/api/v1/invoices/:id/mark-sent", async (request) => {
+    const { id } = parseOrThrow(InvoiceIdParamsSchema.safeParse(request.params));
+    return { invoice: requireInvoice(await service.markSent(id)) };
+  });
+
+  app.post("/api/v1/invoices/:id/mark-paid", async (request) => {
+    const { id } = parseOrThrow(InvoiceIdParamsSchema.safeParse(request.params));
+    const input = parseOrThrow(InvoiceMarkPaidInputSchema.safeParse(request.body));
+    return { invoice: requireInvoice(await service.markPaid(id, input)) };
+  });
+
+  app.post("/api/v1/invoices/:id/void", async (request) => {
+    const { id } = parseOrThrow(InvoiceIdParamsSchema.safeParse(request.params));
+    return { invoice: requireInvoice(await service.void(id)) };
   });
 }
 

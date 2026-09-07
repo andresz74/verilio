@@ -15,6 +15,7 @@
     "@verilio/contracts": "workspace:^",
     "@verilio/db": "workspace:^",
     "@verilio/domain": "workspace:^",
+    "@verilio/invoice-pdf": "workspace:^",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "fastify": "^5.12.1",

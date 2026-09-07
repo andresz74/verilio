@@ -1,4 +1,4 @@
-import type { InvoiceDto } from "@verilio/contracts";
+import type { InvoiceDto, InvoicePresentationModel } from "@verilio/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -56,6 +56,7 @@ function makeInvoice(overrides: Partial<InvoiceDto> = {}): InvoiceDto {
     clientId,
     clientName: "Acme",
     status: "draft",
+    displayStatus: "draft",
     currency: "EUR",
     issueDate: "2026-09-06",
     dueDate: "2026-10-06",
@@ -71,6 +72,8 @@ function makeInvoice(overrides: Partial<InvoiceDto> = {}): InvoiceDto {
     taxAmount: "9.18",
     total: "162.18",
     notes: "Thank you",
+    paymentTermsDays: 30,
+    footer: "Pay by bank transfer",
     items: [{
       id: itemId,
       kind: "time",
@@ -86,6 +89,33 @@ function makeInvoice(overrides: Partial<InvoiceDto> = {}): InvoiceDto {
     createdAt: "2026-09-06T12:00:00.000Z",
     updatedAt: "2026-09-06T12:00:00.000Z",
     ...overrides,
+  };
+}
+
+function presentation(invoice = makeInvoice()): InvoicePresentationModel {
+  return {
+    invoiceNumber: invoice.invoiceNumber,
+    status: invoice.status,
+    displayStatus: invoice.displayStatus,
+    currency: invoice.currency,
+    issueDate: invoice.issueDate,
+    dueDate: invoice.dueDate,
+    paidAt: invoice.paidAt,
+    seller: invoice.sellerSnapshot,
+    client: invoice.clientSnapshot,
+    items: invoice.items.map(({ id, kind, description, quantity, unitPrice, amount, sortOrder }) => ({ id, kind, description, quantity, unitPrice, amount, sortOrder })),
+    subtotal: invoice.subtotal,
+    discountType: invoice.discountType,
+    discountValue: invoice.discountValue,
+    discountAmount: invoice.discountAmount,
+    taxableSubtotal: invoice.taxableSubtotal,
+    taxPercent: invoice.taxPercent,
+    taxAmount: invoice.taxAmount,
+    total: invoice.total,
+    notes: invoice.notes,
+    paymentTermsDays: invoice.paymentTermsDays,
+    paymentTermsLabel: "Payment due within 30 days",
+    footer: invoice.footer,
   };
 }
 
@@ -228,4 +258,81 @@ describe("Invoice pages", () => {
     await user.click(within(remove).getByRole("button", { name: "Remove Item" }));
     await waitFor(() => expect(screen.queryByText("View 1 source entry")).not.toBeInTheDocument());
   }, 15_000);
+
+  it("previews saved values, then marks Sent and Paid with an explicit DateOnly paid date", async () => {
+    let current = makeInvoice();
+    baseHandlers(current);
+    let paidBody: unknown;
+    server.use(
+      http.get(`/api/v1/invoices/${invoiceId}`, () => HttpResponse.json({ invoice: current })),
+      http.get(`/api/v1/invoices/${invoiceId}/presentation`, () => HttpResponse.json({ presentation: presentation(current) })),
+      http.post(`/api/v1/invoices/${invoiceId}/mark-sent`, () => {
+        current = makeInvoice({ status: "sent", displayStatus: "overdue" });
+        return HttpResponse.json({ invoice: current });
+      }),
+      http.post(`/api/v1/invoices/${invoiceId}/mark-paid`, async ({ request }) => {
+        paidBody = await request.json();
+        current = makeInvoice({ status: "paid", displayStatus: "paid", paidAt: "2026-09-04" });
+        return HttpResponse.json({ invoice: current });
+      }),
+    );
+    const user = userEvent.setup();
+    renderInvoices(`/invoices/${invoiceId}`);
+    await user.click(await screen.findByRole("button", { name: "Preview" }));
+    const preview = await screen.findByRole("dialog", { name: "Preview INV-1" });
+    expect(within(preview).getByText("Verilio Studio")).toBeVisible();
+    expect(within(preview).getByText("EUR €162.18")).toBeVisible();
+    expect(within(preview).getByText("Payment due within 30 days")).toBeVisible();
+    expect(within(preview).getByRole("link", { name: "Download PDF" })).toHaveAttribute("href", `/api/v1/invoices/${invoiceId}/pdf`);
+    await user.click(within(preview).getByRole("button", { name: "Close" }));
+
+    await user.click(screen.getByRole("button", { name: "Mark Sent" }));
+    const sent = await screen.findByRole("dialog", { name: "Mark INV-1 as sent?" });
+    expect(within(sent).getByText(/will not email/)).toBeVisible();
+    await user.click(within(sent).getByRole("button", { name: "Mark Sent" }));
+    expect((await screen.findAllByText("Overdue"))[0]).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Save Draft" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Mark Paid" }));
+    const paid = await screen.findByRole("dialog", { name: "Mark INV-1 as paid?" });
+    await user.clear(within(paid).getByLabelText("Paid date"));
+    await user.type(within(paid).getByLabelText("Paid date"), "2026-09-04");
+    await user.click(within(paid).getByRole("button", { name: "Mark Paid" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Mark INV-1 as paid?" })).not.toBeInTheDocument());
+    expect(paidBody).toEqual({ paidAt: "2026-09-04" });
+    expect(screen.getByText(/Paid on 2026-09-04/)).toBeVisible();
+    expect(screen.getByLabelText("Notes")).toBeDisabled();
+  });
+
+  it("keeps Draft authoritative on lifecycle failure and renders Void as terminal/read-only", async () => {
+    let shouldFail = true;
+    let current = makeInvoice();
+    baseHandlers(current);
+    server.use(
+      http.get(`/api/v1/invoices/${invoiceId}`, () => HttpResponse.json({ invoice: current })),
+      http.post(`/api/v1/invoices/${invoiceId}/mark-sent`, () => shouldFail
+        ? HttpResponse.json({ error: { code: "CONFLICT", message: "Lifecycle race", fieldErrors: null, requestId: "test" } }, { status: 409 })
+        : HttpResponse.json({ invoice: current })),
+      http.post(`/api/v1/invoices/${invoiceId}/void`, () => {
+        current = makeInvoice({ status: "void", displayStatus: "void" });
+        return HttpResponse.json({ invoice: current });
+      }),
+    );
+    const user = userEvent.setup();
+    renderInvoices(`/invoices/${invoiceId}`);
+    await user.click(await screen.findByRole("button", { name: "Mark Sent" }));
+    let dialog = await screen.findByRole("dialog", { name: "Mark INV-1 as sent?" });
+    await user.click(within(dialog).getByRole("button", { name: "Mark Sent" }));
+    expect(await within(dialog).findByText(/Lifecycle race/)).toBeVisible();
+    expect(screen.getByText("Draft")).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    shouldFail = false;
+    await user.click(screen.getByRole("button", { name: "Void Invoice" }));
+    dialog = await screen.findByRole("dialog", { name: "Void INV-1?" });
+    expect(within(dialog).getByText(/available to Invoice again/)).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Void Invoice" }));
+    expect(await screen.findByText(/Void is terminal/)).toBeVisible();
+    expect(screen.getByLabelText("Issue date")).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Mark Sent" })).not.toBeInTheDocument();
+  });
 });

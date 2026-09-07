@@ -4,6 +4,7 @@ import {
   clients,
   createDatabaseClient,
   invoiceItems,
+  invoiceItemTimeEntries,
   invoices,
   projects,
   tasks,
@@ -83,6 +84,7 @@ async function setupOwner(ownerId: string) {
     nextInvoiceNumber: 1,
     defaultTaxRate: "6.0000",
     defaultInvoiceNotes: "Default notes",
+    invoiceFooter: "Payment details on file",
     timezone: "America/New_York",
   });
   const client = await new ClientService(db, ownerId).create(clientInput());
@@ -223,5 +225,115 @@ describe("M7 manual Items and authoritative totals", () => {
     expect(edited).toMatchObject({ subtotal: "200.00", total: "190.80" });
     await expect(service.addManualItem(invoice.id, { description: "Bad", quantity: "1", unitPrice: "-1" })).rejects.toMatchObject({ code: "INVOICE_CALCULATION_ERROR" });
     expect((await service.removeItem(invoice.id, item.id))?.total).toBe("0.00");
+  });
+});
+
+describe("M8 Invoice PDF and lifecycle", () => {
+  it("builds deterministic saved presentation data and a real PDF after live records change", async () => {
+    const own = await setupOwner(OWNER_A);
+    const service = new InvoiceService(db, OWNER_A, () => new Date("2026-09-06T16:00:00.000Z"));
+    const time = await new TimeEntryService(db, OWNER_A).create({ mode: "duration", workDate: "2026-09-01", durationSeconds: 36_000, clientId: own.client.id, projectId: own.project.id, taskId: own.task.id, description: "Saved historical work", billable: true });
+    const draft = await service.create({ ...draftInput(own.client.id), issueDate: "2026-09-01", dueDate: "2026-09-05" });
+    const saved = await service.importTime(draft.id, { from: "2026-09-01", to: "2026-09-01", timeEntryIds: [time.id], grouping: "project" });
+    await service.update(draft.id, { ...draftInput(own.client.id), issueDate: "2026-09-01", dueDate: "2026-09-05", discountType: "percentage", discountValue: "10", taxPercent: "6" });
+    await new ProjectService(db, OWNER_A).update(own.project.id, projectInput(own.client.id, "125.0000"));
+    await new ClientService(db, OWNER_A).update(own.client.id, { ...clientInput("Changed Client", "GBP"), address: "99 Changed Client Street", defaultHourlyRate: "150.0000" });
+    await db.update(businessProfiles).set({ businessName: "Changed Studio", address: "99 Changed Seller Street", defaultHourlyRate: "200.0000", paymentTermsDays: 7, invoiceFooter: "Changed footer" }).where(eq(businessProfiles.userId, OWNER_A));
+
+    const presentation = await service.presentation(draft.id);
+    expect(presentation).toMatchObject({
+      displayStatus: "draft",
+      seller: { businessName: "M7 Studio", address: "7 Seller Road" },
+      client: { name: "M7 Client", address: "1 Original Street" },
+      items: [{ description: "Windows", quantity: "10.000000000000", unitPrice: "85.0000", amount: "850.0000" }],
+      subtotal: "850.00",
+      discountAmount: "85.00",
+      taxableSubtotal: "765.00",
+      taxAmount: "45.90",
+      total: "810.90",
+      currency: "USD",
+      paymentTermsDays: 30,
+      paymentTermsLabel: "Payment due within 30 days",
+      footer: "Payment details on file",
+    });
+    expect(saved?.invoiceNumber).toBe(draft.invoiceNumber);
+    const pdf = await service.pdf(draft.id);
+    expect(pdf?.filename).toBe(`invoice-${draft.invoiceNumber}.pdf`);
+    expect(pdf?.buffer.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(pdf?.buffer.byteLength).toBeGreaterThan(1_000);
+    expect(await new InvoiceService(db, OWNER_B).presentation(draft.id)).toBeNull();
+    expect(await new InvoiceService(db, OWNER_B).pdf(draft.id)).toBeNull();
+  });
+
+  it("enforces Draft → Sent → Paid, derives Overdue by Business date, and preserves financial history", async () => {
+    const own = await setupOwner(OWNER_A);
+    const service = new InvoiceService(db, OWNER_A, () => new Date("2026-09-06T16:00:00.000Z"));
+    const draft = await service.create({ ...draftInput(own.client.id), issueDate: "2026-09-01", dueDate: "2026-09-05" });
+    await expect(service.markPaid(draft.id, { paidAt: "2026-09-06" })).rejects.toMatchObject({ code: "INVOICE_STATE_INVALID" });
+    await expect(service.markSent(draft.id)).rejects.toMatchObject({ code: "INVOICE_CALCULATION_ERROR" });
+    await expect(service.pdf(draft.id)).rejects.toMatchObject({ code: "INVOICE_CALCULATION_ERROR" });
+    const withItem = await service.addManualItem(draft.id, { description: "Lifecycle work", quantity: "3", unitPrice: "85" });
+    const before = { number: withItem?.invoiceNumber, seller: withItem?.sellerSnapshot, client: withItem?.clientSnapshot, subtotal: withItem?.subtotal, total: withItem?.total, currency: withItem?.currency };
+    const sent = await service.markSent(draft.id);
+    expect(sent).toMatchObject({ status: "sent", displayStatus: "overdue", paidAt: null });
+    await expect(service.markSent(draft.id)).rejects.toMatchObject({ code: "INVOICE_STATE_INVALID" });
+    await expect(service.update(draft.id, { ...draftInput(own.client.id) })).rejects.toMatchObject({ code: "INVOICE_STATE_INVALID" });
+    const paid = await service.markPaid(draft.id, { paidAt: "2026-09-04" });
+    expect(paid).toMatchObject({ status: "paid", displayStatus: "paid", paidAt: "2026-09-04" });
+    expect({ number: paid?.invoiceNumber, seller: paid?.sellerSnapshot, client: paid?.clientSnapshot, subtotal: paid?.subtotal, total: paid?.total, currency: paid?.currency }).toEqual(before);
+    await expect(service.void(draft.id)).rejects.toMatchObject({ code: "INVOICE_STATE_INVALID" });
+    await expect(service.markPaid(draft.id, { paidAt: "2026-09-06" })).rejects.toMatchObject({ code: "INVOICE_STATE_INVALID" });
+  });
+
+  it("voids without deleting history, releases Time, and allows re-invoicing", async () => {
+    const own = await setupOwner(OWNER_A);
+    const timeService = new TimeEntryService(db, OWNER_A);
+    const entry = await timeService.create({ mode: "duration", workDate: "2026-09-05", durationSeconds: 3_600, clientId: own.client.id, projectId: own.project.id, taskId: own.task.id, description: "Void release", billable: true });
+    const service = new InvoiceService(db, OWNER_A);
+    const first = await service.create(draftInput(own.client.id));
+    const imported = await service.importTime(first.id, { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entry.id], grouping: "project" });
+    await service.markSent(first.id);
+    const voided = await service.void(first.id);
+    expect(voided).toMatchObject({ status: "void", displayStatus: "void", invoiceNumber: first.invoiceNumber });
+    expect(voided?.items[0]?.sources[0]?.id).toBe(entry.id);
+    expect((await timeService.get(entry.id))?.invoice).toBeNull();
+    expect((await new ReportService(db, OWNER_A).detailed({ from: "2026-09-01", to: "2026-09-30", billable: "all", invoiceStatus: "not-invoiced", page: 1, pageSize: 25 })).entries[0]?.id).toBe(entry.id);
+    const second = await service.create(draftInput(own.client.id));
+    expect((await service.eligibleTime(second.id, { from: "2026-09-01", to: "2026-09-30" }))?.entries.map(({ id }) => id)).toContain(entry.id);
+    await service.importTime(second.id, { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entry.id], grouping: "individual" });
+    expect((await timeService.get(entry.id))?.invoice?.id).toBe(second.id);
+    const historicalLinks = await db.select().from(invoiceItemTimeEntries).where(eq(invoiceItemTimeEntries.timeEntryId, entry.id));
+    expect(historicalLinks).toHaveLength(2);
+    expect((await service.get(first.id))?.items[0]?.sources[0]?.id).toBe(entry.id);
+    expect(imported?.items).toHaveLength(1);
+    await expect(service.markSent(first.id)).rejects.toMatchObject({ code: "INVOICE_STATE_INVALID" });
+    await expect(service.markPaid(first.id, { paidAt: "2026-09-06" })).rejects.toMatchObject({ code: "INVOICE_STATE_INVALID" });
+    await expect(service.update(first.id, { ...draftInput(own.client.id) })).rejects.toMatchObject({ code: "INVOICE_STATE_INVALID" });
+
+    const emptyDraft = await service.create(draftInput(own.client.id));
+    expect(await service.void(emptyDraft.id)).toMatchObject({ status: "void", invoiceNumber: emptyDraft.invoiceNumber });
+  });
+
+  it("serializes concurrent Paid and Void terminal transitions and keeps Paid Time reserved", async () => {
+    const own = await setupOwner(OWNER_A);
+    const timeService = new TimeEntryService(db, OWNER_A);
+    const entry = await timeService.create({ mode: "duration", workDate: "2026-09-05", durationSeconds: 3_600, clientId: own.client.id, projectId: own.project.id, taskId: null, description: "Terminal race", billable: true });
+    const service = new InvoiceService(db, OWNER_A);
+    const invoice = await service.create(draftInput(own.client.id));
+    await service.importTime(invoice.id, { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entry.id], grouping: "individual" });
+    await service.markSent(invoice.id);
+    const results = await Promise.allSettled([
+      service.markPaid(invoice.id, { paidAt: "2026-09-06" }),
+      service.void(invoice.id),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "INVOICE_STATE_INVALID", statusCode: 409 } });
+    const terminal = await service.get(invoice.id);
+    expect(["paid", "void"]).toContain(terminal?.status);
+    const replacement = await service.create(draftInput(own.client.id));
+    const eligible = await service.eligibleTime(replacement.id, { from: "2026-09-01", to: "2026-09-30" });
+    expect(eligible?.entries.some(({ id }) => id === entry.id)).toBe(terminal?.status === "void");
+    if (terminal?.status === "paid") expect((await timeService.get(entry.id))?.invoice?.id).toBe(invoice.id);
   });
 });
