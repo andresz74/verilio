@@ -1,5 +1,6 @@
 import { createDatabaseClient } from "@verilio/db";
 import { config as loadEnvironment } from "dotenv";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { buildApp } from "./app.js";
@@ -10,7 +11,9 @@ loadEnvironment({
   quiet: true,
 });
 
-const environment = parseEnvironment(process.env);
+const environment = parseEnvironment(process.env, (path) =>
+  readFileSync(path, "utf8"),
+);
 const { db, pool } = createDatabaseClient(environment.DATABASE_URL);
 const app = buildApp({
   db,

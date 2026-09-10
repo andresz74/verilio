@@ -29,4 +29,60 @@ describe("parseEnvironment", () => {
   it("fails clearly when DATABASE_URL is absent", () => {
     expect(() => parseEnvironment({})).toThrow("Invalid API environment");
   });
+
+  it("reads DATABASE_URL from a secret file", () => {
+    const result = parseEnvironment(
+      { DATABASE_URL_FILE: "/run/secrets/database_url" },
+      () => "postgresql://secret-user:secret-value@postgres:5432/verilio\n",
+    );
+
+    expect(result.DATABASE_URL).toBe(
+      "postgresql://secret-user:secret-value@postgres:5432/verilio",
+    );
+  });
+
+  it("gives DATABASE_URL_FILE deterministic precedence over DATABASE_URL", () => {
+    const result = parseEnvironment(
+      {
+        DATABASE_URL: "postgresql://environment:environment@localhost/verilio",
+        DATABASE_URL_FILE: "/run/secrets/database_url",
+      },
+      () => "postgresql://file:file@postgres/verilio",
+    );
+
+    expect(result.DATABASE_URL).toBe("postgresql://file:file@postgres/verilio");
+  });
+
+  it("does not include database secret contents in validation failures", () => {
+    const secret = "not-a-url-with-super-secret-password";
+
+    expect(() =>
+      parseEnvironment(
+        { DATABASE_URL_FILE: "/run/secrets/database_url" },
+        () => secret,
+      ),
+    ).toThrow("Invalid API environment");
+
+    try {
+      parseEnvironment(
+        { DATABASE_URL_FILE: "/run/secrets/database_url" },
+        () => secret,
+      );
+    } catch (error) {
+      expect(String(error)).not.toContain(secret);
+    }
+  });
+
+  it("fails clearly without exposing file errors", () => {
+    expect(() =>
+      parseEnvironment(
+        { DATABASE_URL_FILE: "/run/secrets/database_url" },
+        () => {
+          throw new Error("permission denied for /private/secret-value");
+        },
+      ),
+    ).toThrow(
+      "Invalid API environment: DATABASE_URL_FILE could not be read or was empty.",
+    );
+  });
 });

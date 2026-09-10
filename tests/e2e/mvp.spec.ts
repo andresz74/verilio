@@ -250,6 +250,7 @@ test("completes the canonical private MVP loop with historical and billing integ
   await page.getByLabel("Discount percent").fill("10");
   await page.getByLabel("Tax percent").fill("6");
   await page.getByRole("button", { name: "Save Draft" }).click();
+  await expect(page.getByRole("button", { name: "Saved Draft" })).toBeVisible();
 
   const savedInvoice = await getJson<{ invoice: {
     invoiceNumber: string;

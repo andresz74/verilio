@@ -45,7 +45,9 @@ then create a Client, Project, and optional Tasks.
 
 Server variables are validated at startup:
 
-- `DATABASE_URL` — required PostgreSQL URL
+- `DATABASE_URL` — PostgreSQL URL used for development and as the production fallback
+- `DATABASE_URL_FILE` — optional server-side secret file; when set, it deterministically takes
+  precedence over `DATABASE_URL`
 - `API_HOST` — defaults to `127.0.0.1`
 - `API_PORT` — defaults to `3000`
 - `LOCAL_USER_ID` — fixed private/local owner UUID; defaults to the development owner
@@ -100,6 +102,26 @@ VITE_API_TARGET=http://127.0.0.1:3000 pnpm --filter @verilio/web preview --host 
 Verify the app at `http://127.0.0.1:4173` and both health endpoints through the
 preview origin. Vite preview is a local smoke-test server, not the recommended
 production web server.
+
+## Private alpha deployment
+
+The reproducible Docker/Tailscale deployment for a low-resource private host is
+documented in [docs/08-private_alpha_self_hosted_deployment.md](docs/08-private_alpha_self_hosted_deployment.md).
+
+The production runtime uses prebuilt `linux/amd64` images, Caddy behind
+Tailscale Serve, a one-shot migration container, and PostgreSQL 17 with a named
+volume. The runtime host does not need Node.js, pnpm, source code, or a container
+build toolchain.
+
+Build-host entry points:
+
+```sh
+./deploy/build-release.sh <git-tag>
+./deploy/test-release.sh <git-tag>
+./deploy/export-release.sh <git-tag>
+```
+
+These commands do not publish images or deploy anything to a public service.
 
 ## Migration history notes
 
