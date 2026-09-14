@@ -33,7 +33,7 @@ import {
   timerKeys,
 } from "./time-entry-api.js";
 import { TimeEntryFormDialog } from "./time-entry-form-dialog.js";
-import { formatDuration, hierarchyLabel } from "./time-format.js";
+import { formatDuration, formatHourlyRate, hierarchyLabel } from "./time-format.js";
 
 const TimerFormSchema = z.object({
   description: z.string().trim().max(1_000),
@@ -132,7 +132,7 @@ export function TimerPage() {
             <div className="divide-y divide-[var(--color-border-default)]">
               {recentQuery.data.entries.map((entry) => (
                 <article key={entry.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0"><h3 className="m-0 truncate text-sm font-semibold">{entry.description}</h3><p className="mb-0 mt-1 text-xs text-[var(--color-text-secondary)]">{entry.workDate} · {hierarchyLabel(entry)}</p><div className="mt-2 flex gap-2"><StatusBadge tone={entry.billable ? "success" : "neutral"}>{entry.billable ? `Billable · ${entry.hourlyRate ?? "—"}/hr` : "Non-billable"}</StatusBadge><StatusBadge tone="neutral">{entry.mode}</StatusBadge></div></div>
+                  <div className="min-w-0"><h3 className="m-0 truncate text-sm font-semibold">{entry.description}</h3><p className="mb-0 mt-1 text-xs text-[var(--color-text-secondary)]">{entry.workDate} · {hierarchyLabel(entry)}</p><div className="mt-2 flex gap-2"><StatusBadge tone={entry.billable ? "success" : "neutral"}>{entry.billable ? `Billable · ${entry.hourlyRate ? formatHourlyRate(entry.hourlyRate) : "—"}/hr` : "Non-billable"}</StatusBadge><StatusBadge tone="neutral">{entry.mode}</StatusBadge></div></div>
                   <div className="flex shrink-0 items-center gap-2"><strong className="mr-2 text-sm tabular-nums">{formatDuration(entry.durationSeconds)}</strong>{entry.invoice ? <Link className="inline-flex min-h-8 items-center px-2 text-sm font-semibold text-[var(--color-accent-active)] underline" to={`/invoices/${entry.invoice.id}`}>View {entry.invoice.invoiceNumber}</Link> : <><Button size="sm" variant="secondary" onClick={() => setEditing(entry)}>Edit</Button><Button size="sm" variant="quiet" onClick={() => setDeleting(entry)}>Delete</Button></>}</div>
                 </article>
               ))}

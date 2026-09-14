@@ -57,7 +57,7 @@ test("tracks authoritative timer and manual time through the M4 exit gate", asyn
   await expect(runningRegion).toContainText(timerDescription);
   await runningRegion.getByRole("button", { name: "Stop" }).click();
   const timerEntry = page.locator("article").filter({ hasText: timerDescription });
-  await expect(timerEntry).toContainText("135.0000/hr");
+  await expect(timerEntry).toContainText("135.00/hr");
 
   await page.goto("/projects");
   await projectRow.getByRole("button", { name: "Edit" }).click();
@@ -65,7 +65,7 @@ test("tracks authoritative timer and manual time through the M4 exit gate", asyn
   await dialog.getByLabel(/Hourly rate override/).fill("200");
   await dialog.getByRole("button", { name: "Save project" }).click();
   await page.goto("/timer");
-  await expect(page.locator("article").filter({ hasText: timerDescription })).toContainText("135.0000/hr");
+  await expect(page.locator("article").filter({ hasText: timerDescription })).toContainText("135.00/hr");
 
   await page.getByRole("button", { name: /Add time/ }).click();
   dialog = page.getByRole("dialog", { name: "Add time manually" });

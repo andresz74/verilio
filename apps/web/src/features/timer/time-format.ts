@@ -16,6 +16,14 @@ export function formatDuration(seconds: number | null): string {
   return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
 }
 
+export function formatHourlyRate(rate: string): string {
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+    useGrouping: false,
+  }).format(Number(rate));
+}
+
 export function parseDurationText(value: string): number | null {
   const trimmed = value.trim().toLowerCase();
   const clock = /^(\d+):([0-5]\d)$/.exec(trimmed);

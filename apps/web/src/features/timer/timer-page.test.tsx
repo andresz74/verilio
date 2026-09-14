@@ -88,6 +88,34 @@ describe("TimerPage", () => {
     expect(screen.getByText("Running")).toBeVisible();
   });
 
+  it("formats Recent time rates without mutating values or changing row actions", async () => {
+    handlers();
+    const recentEntries = [
+      { ...running, id: entryId, description: "Thirty two", endAt: "2026-09-05T15:00:00.000Z", durationSeconds: 3_600, hourlyRate: "32.0000", currency: "USD" },
+      { ...running, id: "55555555-5555-4555-8555-555555555555", description: "Fifty invoiced", endAt: "2026-09-05T15:00:00.000Z", durationSeconds: 3_600, hourlyRate: "50.0000", currency: "USD", invoice: { id: "66666666-6666-4666-8666-666666666666", invoiceNumber: "INV-7" } },
+      { ...running, id: "77777777-7777-4777-8777-777777777777", description: "One decimal", endAt: "2026-09-05T15:00:00.000Z", durationSeconds: 3_600, hourlyRate: "32.5", currency: "USD" },
+      { ...running, id: "88888888-8888-4888-8888-888888888888", description: "Admin", endAt: "2026-09-05T15:00:00.000Z", durationSeconds: 3_600, billable: false, hourlyRate: null, currency: null },
+    ];
+    const originalRates = recentEntries.map((entry) => entry.hourlyRate);
+    server.use(
+      http.get("/api/v1/time-entries/recent", () =>
+        HttpResponse.json({ entries: recentEntries }),
+      ),
+    );
+
+    renderPage();
+
+    const row = (name: string) => screen.getByRole("heading", { name }).closest("article")!;
+    expect(within(await waitFor(() => row("Thirty two"))).getByText("Billable · 32.00/hr")).toBeVisible();
+    expect(within(row("Fifty invoiced")).getByText("Billable · 50.00/hr")).toBeVisible();
+    expect(within(row("One decimal")).getByText("Billable · 32.50/hr")).toBeVisible();
+    expect(within(row("Admin")).getByText("Non-billable")).toBeVisible();
+    expect(recentEntries.map((entry) => entry.hourlyRate)).toEqual(originalRates);
+    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(3);
+    expect(screen.getByRole("link", { name: "View INV-7" })).toBeVisible();
+  });
+
   it("creates both manual modes and exposes edit/delete correction flows", async () => {
     handlers();
     const createdBodies: unknown[] = [];

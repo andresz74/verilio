@@ -106,7 +106,7 @@ test("completes the canonical private MVP loop with historical and billing integ
     name: "Stop",
   }).click();
   const timerEntry = page.locator("article").filter({ hasText: timerDescription });
-  await expect(timerEntry).toContainText("85.0000/hr");
+  await expect(timerEntry).toContainText("85.00/hr");
 
   const settings = await getSettings(request);
   await expectOk(
