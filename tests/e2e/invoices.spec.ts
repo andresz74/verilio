@@ -54,13 +54,6 @@ test("completes Draft → PDF → Sent → Paid while preserving reserved histor
   await page.goto("/invoices/new");
   await page.getByLabel("Client", { exact: true }).selectOption({ label: `${clientName} — USD` });
   await expect(page.getByLabel("Invoice currency")).toHaveValue("USD");
-  await page.getByRole("button", { name: "Save Draft" }).click();
-  await expect(page).toHaveURL(/\/invoices\/[0-9a-f-]+$/);
-  const invoiceId = page.url().split("/").at(-1)!;
-  const invoiceHeading = page.getByRole("heading", { level: 1, name: new RegExp(`^${invoicePrefix}`) });
-  await expect(invoiceHeading).toBeVisible();
-  const invoiceNumber = (await invoiceHeading.textContent())!;
-  expect(invoiceNumber).toMatch(new RegExp(`^${invoicePrefix}`));
 
   await page.getByRole("button", { name: "Import Time" }).click();
   let dialog = page.getByRole("dialog", { name: "Import eligible Time" });
@@ -71,6 +64,9 @@ test("completes Draft → PDF → Sent → Paid while preserving reserved histor
   await dialog.getByRole("button", { name: "Select all" }).click();
   await dialog.getByRole("button", { name: "Import 2 selected" }).click();
   await expect(dialog).not.toBeVisible();
+  await expect(page).toHaveURL(/\/invoices\/new$/);
+  await expect(page.getByRole("heading", { level: 1, name: "New Invoice" })).toBeVisible();
+  await expect(page.getByText(/staged locally and will be reserved only after Save Draft succeeds/)).toBeVisible();
   await expect(page.getByText("View 1 source entry")).toHaveCount(2);
   await page.getByText("View 1 source entry").first().click();
   await expect(page.getByText(new RegExp(`Historical 85.*USD \\$85\\.00/hr.*USD \\$85\\.00`))).toBeVisible();
@@ -85,7 +81,16 @@ test("completes Draft → PDF → Sent → Paid while preserving reserved histor
   await page.getByLabel("Discount type").selectOption("percentage");
   await page.getByLabel("Discount percent").fill("10");
   await page.getByLabel("Tax percent").fill("6");
+  const stillEligible = await request.get(`/api/v1/invoices/eligible-time?clientId=${clientId}&currency=USD&from=${firstDate}&to=${secondDate}`);
+  await expectOk(stillEligible);
+  expect((await stillEligible.json() as { count: number }).count).toBe(2);
   await page.getByRole("button", { name: "Save Draft" }).click();
+  await expect(page).toHaveURL(/\/invoices\/[0-9a-f-]+$/);
+  const invoiceId = page.url().split("/").at(-1)!;
+  const invoiceHeading = page.getByRole("heading", { level: 1, name: new RegExp(`^${invoicePrefix}`) });
+  await expect(invoiceHeading).toBeVisible();
+  const invoiceNumber = (await invoiceHeading.textContent())!;
+  expect(invoiceNumber).toMatch(new RegExp(`^${invoicePrefix}`));
   await expect(page.getByText("USD $200.34")).toBeVisible();
   await page.reload();
   await expect(page.getByRole("heading", { name: invoiceNumber })).toBeVisible();

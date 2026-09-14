@@ -177,6 +177,103 @@ describe("Invoice pages", () => {
     expect(screen.getByTestId("location")).toHaveTextContent("/invoices/new");
   });
 
+  it("stages imported Time and manual Items before the first explicit Draft save", async () => {
+    baseHandlers();
+    let createCalls = 0;
+    let createBody: unknown;
+    let failSave = true;
+    const source = makeInvoice().items[0]!.sources[0]!;
+    const manualItem = {
+      id: "66666666-6666-4666-8666-666666666666",
+      kind: "manual" as const,
+      description: "Design review",
+      quantity: "1",
+      unitPrice: "50",
+      amount: "50.00",
+      sortOrder: 1,
+      sources: [],
+      createdAt: "2026-09-06T12:00:00.000Z",
+      updatedAt: "2026-09-06T12:00:00.000Z",
+    };
+    server.use(
+      http.get("/api/v1/invoices/eligible-time", ({ request }) => {
+        const query = new URL(request.url).searchParams;
+        expect(query.get("clientId")).toBe(clientId);
+        expect(query.get("currency")).toBe("EUR");
+        return HttpResponse.json({ invoiceId: null, currency: "EUR", entries: [source], count: 1, totalDurationSeconds: 7200, totalAmount: "170.00" });
+      }),
+      http.post("/api/v1/invoices", async ({ request }) => {
+        createCalls += 1;
+        createBody = await request.json();
+        if (failSave) return HttpResponse.json({ error: { code: "TIME_ENTRY_ALREADY_INVOICED", message: "Some selected Time is no longer available.", fieldErrors: null, requestId: "test" } }, { status: 409 });
+        return HttpResponse.json({ invoice: makeInvoice({ items: [makeInvoice().items[0]!, manualItem], subtotal: "220.00", discountAmount: "0.00", taxableSubtotal: "220.00", taxAmount: "13.20", total: "233.20" }) });
+      }),
+    );
+    const user = userEvent.setup();
+    renderInvoices("/invoices/new");
+
+    const importButton = await screen.findByRole("button", { name: "Import Time" });
+    expect(importButton).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Add manual Item" }));
+    let dialog = await screen.findByRole("dialog", { name: "Add manual Item" });
+    await user.type(within(dialog).getByLabelText("Description"), "Design review");
+    await user.clear(within(dialog).getByLabelText(/Unit price/));
+    await user.type(within(dialog).getByLabelText(/Unit price/), "50");
+    await user.click(within(dialog).getByRole("button", { name: "Save Item" }));
+    expect(await screen.findByText("Design review")).toBeVisible();
+    expect(createCalls).toBe(0);
+
+    await user.selectOptions(screen.getByLabelText("Client"), clientId);
+    expect(screen.getByLabelText("Invoice currency")).toHaveValue("EUR");
+    expect(importButton).toBeEnabled();
+    await user.click(importButton);
+    dialog = await screen.findByRole("dialog", { name: "Import eligible Time" });
+    expect(within(dialog).getByLabelText("Grouping")).toHaveValue("project");
+    await user.click(within(dialog).getByRole("button", { name: "Select all" }));
+    await user.click(within(dialog).getByRole("button", { name: "Import 1 selected" }));
+    expect(await screen.findByText("Website")).toBeVisible();
+    expect(screen.getByText(/staged locally and will be reserved only after Save Draft succeeds/)).toBeVisible();
+    expect(screen.getByText("EUR €233.20")).toBeVisible();
+    expect(screen.getByTestId("location")).toHaveTextContent("/invoices/new");
+    expect(screen.queryByText("INV-1")).not.toBeInTheDocument();
+    expect(createCalls).toBe(0);
+
+    await user.clear(screen.getByLabelText("Notes"));
+    await user.type(screen.getByLabelText("Notes"), "Preserve this composition");
+    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    expect(await screen.findByText(/Some selected Time is no longer available/)).toBeVisible();
+    expect(screen.getByLabelText("Notes")).toHaveValue("Preserve this composition");
+    expect(screen.getByText("Design review")).toBeVisible();
+    expect(screen.getByText("Website")).toBeVisible();
+    expect(screen.getByTestId("location")).toHaveTextContent("/invoices/new");
+
+    const stagedTimeRow = screen.getByText("Website").closest("tr");
+    expect(stagedTimeRow).not.toBeNull();
+    await user.click(within(stagedTimeRow!).getByRole("button", { name: "Remove" }));
+    dialog = await screen.findByRole("dialog", { name: /Remove “Website”/ });
+    expect(within(dialog).getByText(/No Time has been reserved yet/)).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Remove Item" }));
+    expect(screen.queryByText("Website")).not.toBeInTheDocument();
+    expect(screen.getByText("Design review")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Import Time" }));
+    dialog = await screen.findByRole("dialog", { name: "Import eligible Time" });
+    await user.click(within(dialog).getByRole("button", { name: "Select all" }));
+    await user.click(within(dialog).getByRole("button", { name: "Import 1 selected" }));
+    expect(await screen.findByText("Website")).toBeVisible();
+
+    failSave = false;
+    await user.click(screen.getByRole("button", { name: "Save Draft" }));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(`/invoices/${invoiceId}`));
+    expect(createCalls).toBe(2);
+    expect(createBody).toMatchObject({
+      clientId,
+      currency: "EUR",
+      notes: "Preserve this composition",
+      manualItems: [{ description: "Design review", quantity: "1", unitPrice: "50" }],
+      timeImport: { timeEntryIds: [entryId], grouping: "project" },
+    });
+  }, 15_000);
+
   it("imports selected Time by Project by default and exposes source traceability", async () => {
     let current = makeInvoice({ items: [], subtotal: "0.00", discountAmount: "0.00", taxableSubtotal: "0.00", taxAmount: "0.00", total: "0.00" });
     baseHandlers(current);

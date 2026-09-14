@@ -4,6 +4,7 @@ import {
   EligibleTimeResponseSchema,
   ImportTimeInputSchema,
   InvoiceCreateInputSchema,
+  InvoiceEligibleTimeContextQuerySchema,
   InvoiceListResponseSchema,
   InvoiceManualItemInputSchema,
   InvoiceMarkPaidInputSchema,
@@ -14,6 +15,7 @@ import {
   type EligibleTimeResponse,
   type ImportTimeInput,
   type InvoiceCreateInput,
+  type InvoiceEligibleTimeContextQuery,
   type InvoiceListResponse,
   type InvoiceManualItemInput,
   type InvoiceMarkPaidInput,
@@ -28,6 +30,7 @@ export const invoiceKeys = {
   detail: (id: string) => ["invoices", "detail", id] as const,
   presentation: (id: string) => ["invoices", "presentation", id] as const,
   eligible: (id: string, query: EligibleTimeQuery) => ["invoices", "eligible", id, query] as const,
+  eligibleForContext: (query: InvoiceEligibleTimeContextQuery) => ["invoices", "eligible", "new", query] as const,
 };
 
 export class InvoiceApiError extends Error {
@@ -64,6 +67,12 @@ export function updateInvoice(id: string, input: InvoiceUpdateInput): Promise<In
 export function getEligibleTime(id: string, input: EligibleTimeQuery): Promise<EligibleTimeResponse> {
   const query = EligibleTimeQuerySchema.parse(input);
   return request(`/api/v1/invoices/${id}/eligible-time?from=${query.from}&to=${query.to}`, EligibleTimeResponseSchema, "Eligible Time could not be loaded.");
+}
+
+export function getEligibleTimeForContext(input: InvoiceEligibleTimeContextQuery): Promise<EligibleTimeResponse> {
+  const query = InvoiceEligibleTimeContextQuerySchema.parse(input);
+  const search = new URLSearchParams(query).toString();
+  return request(`/api/v1/invoices/eligible-time?${search}`, EligibleTimeResponseSchema, "Eligible Time could not be loaded.");
 }
 
 export function importInvoiceTime(id: string, input: ImportTimeInput): Promise<InvoiceResponse> {

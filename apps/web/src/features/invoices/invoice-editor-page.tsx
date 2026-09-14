@@ -8,7 +8,10 @@ import {
   type InvoiceItemDto,
   type InvoiceManualItemInput,
   type InvoicePresentationModel,
+  type InvoiceSourceTime,
+  type ImportTimeInput,
 } from "@verilio/contracts";
+import { calculateInvoice, calculateInvoiceLineAmount, groupInvoiceTime, type InvoiceCalculation } from "@verilio/domain";
 import {
   Button,
   Checkbox,
@@ -28,6 +31,7 @@ import { ArrowLeft, Ban, CheckCircle2, Clock3, Download, Eye, Plus, Send } from 
 import { useEffect, useState, type ReactNode } from "react";
 import { useForm, useWatch, type FieldValues, type Path, type UseFormSetError } from "react-hook-form";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import type { z } from "zod";
 
 import { PageHeader } from "../../app/app-shell.js";
 import { addDays, dateRangePresetOptions, getPresetRange, type DateRangePreset } from "../../shared/date-range.js";
@@ -40,6 +44,7 @@ import {
   addManualInvoiceItem,
   createInvoice,
   getEligibleTime,
+  getEligibleTimeForContext,
   getInvoice,
   getInvoicePresentation,
   importInvoiceTime,
@@ -52,7 +57,12 @@ import {
   voidInvoice,
 } from "./invoice-api.js";
 
-type InvoiceFormValues = InvoiceCreateInput;
+type InvoiceFormValues = z.input<typeof InvoiceCreateInputSchema>;
+type EditorInvoiceItem = Pick<InvoiceItemDto, "id" | "kind" | "description" | "quantity" | "unitPrice" | "amount" | "sources">;
+type StagedManualItem = { id: string; input: InvoiceManualItemInput };
+type StagedTimeImport = { input: ImportTimeInput; entries: InvoiceSourceTime[] };
+
+let stagedItemSequence = 0;
 
 export function InvoiceEditorPage() {
   const { invoiceId } = useParams();
@@ -73,21 +83,30 @@ function InvoiceEditor({ invoice, settings, clients }: { invoice: InvoiceDto | n
   const queryClient = useQueryClient();
   const timezoneToday = instantFields(new Date().toISOString(), settings.timezone).date;
   const [importOpen, setImportOpen] = useState(false);
-  const [manualItem, setManualItem] = useState<InvoiceItemDto | "new" | null>(null);
-  const [removeItem, setRemoveItem] = useState<InvoiceItemDto | null>(null);
+  const [manualItem, setManualItem] = useState<EditorInvoiceItem | "new" | null>(null);
+  const [removeItem, setRemoveItem] = useState<EditorInvoiceItem | null>(null);
+  const [stagedManualItems, setStagedManualItems] = useState<StagedManualItem[]>([]);
+  const [stagedTimeImport, setStagedTimeImport] = useState<StagedTimeImport | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [lifecycleAction, setLifecycleAction] = useState<"sent" | "paid" | "void" | null>(null);
   const editable = !invoice || invoice.status === "draft";
-  const { register, control, handleSubmit, reset, setError, setValue, formState: { errors, isDirty } } = useForm<InvoiceFormValues>({
+  const { register, control, handleSubmit, reset, setError, setValue, formState: { errors, isDirty } } = useForm<InvoiceFormValues, unknown, InvoiceCreateInput>({
     resolver: zodResolver(InvoiceCreateInputSchema),
     defaultValues: invoiceDefaults(invoice, settings, timezoneToday),
   });
   useEffect(() => reset(invoiceDefaults(invoice, settings, timezoneToday)), [invoice, reset, settings, timezoneToday]);
   const clientId = useWatch({ control, name: "clientId" });
+  const currency = useWatch({ control, name: "currency" });
   const discountType = useWatch({ control, name: "discountType" });
+  const discountValue = useWatch({ control, name: "discountValue" });
+  const taxPercent = useWatch({ control, name: "taxPercent" });
+  const stagedItems = invoice ? invoice.items : buildStagedItems(stagedManualItems, stagedTimeImport, currency);
+  const previewTotals = invoice ? null : calculatePreview(stagedItems, currency, discountType, discountValue, taxPercent);
+  const selectedClient = clients.find((client) => client.id === clientId) ?? null;
+  const canImport = editable && Boolean(invoice || (selectedClient && /^[A-Z]{3}$/.test(currency)));
 
   const save = useMutation({
-    mutationFn: (values: InvoiceFormValues) => invoice
+    mutationFn: (values: InvoiceCreateInput) => invoice
       ? updateInvoice(invoice.id, {
           currency: values.currency,
           issueDate: values.issueDate,
@@ -97,12 +116,20 @@ function InvoiceEditor({ invoice, settings, clients }: { invoice: InvoiceDto | n
           taxPercent: values.taxPercent,
           notes: values.notes,
         })
-      : createInvoice(values),
+      : createInvoice({
+          ...values,
+          manualItems: stagedManualItems.map(({ input }) => input),
+          timeImport: stagedTimeImport?.input,
+        }),
     onSuccess: ({ invoice: saved }) => {
       queryClient.setQueryData(invoiceKeys.detail(saved.id), { invoice: saved });
       void queryClient.invalidateQueries({ queryKey: invoiceKeys.list });
       reset(invoiceDefaults(saved, settings, timezoneToday));
-      if (!invoice) void navigate(`/invoices/${saved.id}`, { replace: true });
+      if (!invoice) {
+        setStagedManualItems([]);
+        setStagedTimeImport(null);
+        void navigate(`/invoices/${saved.id}`, { replace: true });
+      }
     },
     onError: (error) => applyServerErrors(error, setError),
   });
@@ -111,7 +138,7 @@ function InvoiceEditor({ invoice, settings, clients }: { invoice: InvoiceDto | n
     <main>
       <PageHeader
         title={invoice ? invoice.invoiceNumber : "New Invoice"}
-        description={invoice ? `${statusLabel(invoice.displayStatus)} · saved snapshots and authoritative totals` : "Save the Draft before importing tracked Time."}
+        description={invoice ? `${statusLabel(invoice.displayStatus)} · saved snapshots and authoritative totals` : "Compose the Invoice, then save it as a Draft."}
         actions={<div className="flex flex-wrap gap-2"><Link className="inline-flex min-h-10 items-center gap-2 rounded-[var(--radius-md)] px-3 text-sm font-semibold text-[var(--color-text-secondary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-border-focus)]" to="/invoices"><ArrowLeft aria-hidden="true" size={16} /> Invoices</Link>{invoice ? <StatusBadge tone={statusTone(invoice.displayStatus)}>{statusLabel(invoice.displayStatus)}</StatusBadge> : null}{invoice?.items.length ? <><Button variant="secondary" onClick={() => setPreviewOpen(true)}><Eye aria-hidden="true" size={16} /> Preview</Button><a className="inline-flex min-h-10 items-center justify-center gap-2 rounded-[var(--radius-md)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] px-4 py-2 text-sm font-semibold text-[var(--color-text-primary)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-border-focus)]" href={`/api/v1/invoices/${invoice.id}/pdf`}><Download aria-hidden="true" size={16} /> Download PDF</a></> : null}{editable ? <Button form="invoiceForm" type="submit" disabled={save.isPending}>{save.isPending ? "Saving…" : invoice && !isDirty ? "Saved Draft" : "Save Draft"}</Button> : null}</div>}
       />
       <form id="invoiceForm" noValidate onSubmit={(event) => editable ? void handleSubmit((values) => save.mutate(values))(event) : event.preventDefault()}>
@@ -124,11 +151,12 @@ function InvoiceEditor({ invoice, settings, clients }: { invoice: InvoiceDto | n
                 <Field htmlFor="invoiceClient" label="Client" error={errors.clientId?.message}>
                   <ClientSelect id="invoiceClient" disabled={Boolean(invoice)} value={clientId} {...register("clientId", { onChange: (event) => {
                     const selected = clients.find((client) => client.id === event.target.value);
+                    if (!invoice && event.target.value !== clientId) setStagedTimeImport(null);
                     if (selected && !invoice) setValue("currency", selected.currency, { shouldDirty: true, shouldValidate: true });
                   } })} />
                 </Field>
-                <Field htmlFor="invoiceCurrency" label="Invoice currency" hint={invoice?.items.length ? "Remove all Items before changing currency." : "No automatic currency conversion."} error={errors.currency?.message}>
-                  <TextInput id="invoiceCurrency" maxLength={3} disabled={!editable || Boolean(invoice?.items.length)} {...register("currency", { onChange: (event) => { event.target.value = event.target.value.toUpperCase(); } })} />
+                <Field htmlFor="invoiceCurrency" label="Invoice currency" hint={invoice?.items.length ? "Remove all Items before changing currency." : stagedTimeImport ? "Changing currency clears staged Time. No automatic conversion." : "No automatic currency conversion."} error={errors.currency?.message}>
+                  <TextInput id="invoiceCurrency" maxLength={3} disabled={!editable || Boolean(invoice?.items.length)} {...register("currency", { onChange: (event) => { const next = event.target.value.toUpperCase(); event.target.value = next; if (!invoice && next !== currency) setStagedTimeImport(null); } })} />
                 </Field>
                 <Field htmlFor="invoiceIssueDate" label="Issue date" error={errors.issueDate?.message}><DateInput id="invoiceIssueDate" disabled={!editable} {...register("issueDate")} /></Field>
                 <Field htmlFor="invoiceDueDate" label="Due date" error={errors.dueDate?.message}><DateInput id="invoiceDueDate" disabled={!editable} {...register("dueDate")} /></Field>
@@ -137,11 +165,11 @@ function InvoiceEditor({ invoice, settings, clients }: { invoice: InvoiceDto | n
 
             <EditorSection title="Imported Time / Line Items" description="Imported Time retains its historical rate, currency, and source links.">
               <div className="mb-4 flex flex-wrap gap-2">
-                <Button variant="secondary" disabled={!invoice || !editable} onClick={() => setImportOpen(true)}><Clock3 aria-hidden="true" size={16} /> Import Time</Button>
-                <Button variant="secondary" disabled={!invoice || !editable} onClick={() => setManualItem("new")}><Plus aria-hidden="true" size={16} /> Add manual Item</Button>
-                {!invoice ? <p className="m-0 self-center text-xs text-[var(--color-text-muted)]">Save this Draft first to reserve Time safely.</p> : null}
+                <Button variant="secondary" disabled={!canImport} onClick={() => setImportOpen(true)}><Clock3 aria-hidden="true" size={16} /> Import Time</Button>
+                <Button variant="secondary" disabled={!editable} onClick={() => setManualItem("new")}><Plus aria-hidden="true" size={16} /> Add manual Item</Button>
+                {!invoice && !canImport ? <p className="m-0 self-center text-xs text-[var(--color-text-muted)]">Select a client to import time.</p> : null}
               </div>
-              {invoice?.items.length ? <InvoiceItemsTable editable={editable} invoice={invoice} onEdit={setManualItem} onRemove={setRemoveItem} /> : <p className="m-0 rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] p-4 text-sm text-[var(--color-text-secondary)]">This Draft has no Items yet. Empty Drafts are allowed.</p>}
+              {stagedItems.length ? <><InvoiceItemsTable editable={editable} currency={currency} items={stagedItems} onEdit={setManualItem} onRemove={setRemoveItem} />{!invoice && stagedTimeImport ? <p role="status" className="mb-0 mt-3 text-xs text-[var(--color-text-muted)]">Imported Time is staged locally and will be reserved only after Save Draft succeeds.</p> : null}</> : <p className="m-0 rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] p-4 text-sm text-[var(--color-text-secondary)]">This Draft has no Items yet. Empty Drafts are allowed.</p>}
             </EditorSection>
 
             <EditorSection title="Notes / terms" description={invoice ? `Saved payment terms: ${invoice.paymentTermsDays} days.${invoice.footer ? ` Footer: ${invoice.footer}` : ""}` : `Business payment terms default to ${settings.paymentTermsDays} days.`}>
@@ -156,16 +184,16 @@ function InvoiceEditor({ invoice, settings, clients }: { invoice: InvoiceDto | n
               <Field htmlFor="discountValue" label={discountType === "fixed" ? "Discount amount" : "Discount percent"} error={errors.discountValue?.message}><TextInput id="discountValue" inputMode="decimal" disabled={!editable || discountType === "none"} {...register("discountValue")} /></Field>
               <Field htmlFor="taxPercent" label="Tax percent" error={errors.taxPercent?.message}><TextInput id="taxPercent" inputMode="decimal" disabled={!editable} {...register("taxPercent")} /></Field>
             </div>
-            <InvoiceTotals invoice={invoice} currency={useWatch({ control, name: "currency" })} />
+            <InvoiceTotals invoice={invoice} preview={previewTotals} currency={currency} />
             <p className="mb-0 mt-4 text-xs text-[var(--color-text-muted)]">Server-calculated totals are authoritative after Save.</p>
             {invoice ? <LifecycleActions invoice={invoice} hasUnsavedChanges={isDirty} onAction={setLifecycleAction} /> : null}
           </aside>
         </div>
       </form>
 
-      {invoice && importOpen ? <ImportTimeDialog invoice={invoice} today={timezoneToday} onOpenChange={setImportOpen} /> : null}
-      {invoice && manualItem ? <ManualItemDialog invoice={invoice} item={manualItem === "new" ? null : manualItem} onOpenChange={(open) => { if (!open) setManualItem(null); }} /> : null}
-      {invoice && removeItem ? <RemoveItemDialog invoice={invoice} item={removeItem} onOpenChange={(open) => { if (!open) setRemoveItem(null); }} /> : null}
+      {importOpen && (invoice || selectedClient) ? <ImportTimeDialog invoice={invoice} clientId={invoice?.clientId ?? selectedClient!.id} clientName={invoice?.clientName ?? selectedClient!.name} currency={currency} staged={stagedTimeImport} today={timezoneToday} onStage={setStagedTimeImport} onOpenChange={setImportOpen} /> : null}
+      {manualItem ? <ManualItemDialog invoice={invoice} currency={currency} item={manualItem === "new" ? null : manualItem} onStage={(input, id) => { setStagedManualItems((current) => id ? current.map((entry) => entry.id === id ? { ...entry, input } : entry) : [...current, { id: nextStagedItemId(), input }]); setManualItem(null); }} onOpenChange={(open) => { if (!open) setManualItem(null); }} /> : null}
+      {removeItem ? <RemoveItemDialog invoice={invoice} item={removeItem} onRemoveLocal={() => { if (removeItem.kind === "manual") setStagedManualItems((current) => current.filter((entry) => entry.id !== removeItem.id)); else setStagedTimeImport((current) => removeSourcesFromStagedImport(current, removeItem.sources.map((source) => source.id))); setRemoveItem(null); }} onOpenChange={(open) => { if (!open) setRemoveItem(null); }} /> : null}
       {invoice && previewOpen ? <InvoicePreviewDialog invoice={invoice} onOpenChange={setPreviewOpen} /> : null}
       {invoice && lifecycleAction ? <LifecycleDialog action={lifecycleAction} invoice={invoice} paidDate={timezoneToday} onOpenChange={(open) => { if (!open) setLifecycleAction(null); }} /> : null}
     </main>
@@ -176,54 +204,67 @@ function EditorSection({ children, description, title }: { children: ReactNode; 
   return <section className="min-w-0 rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-5"><h2 className="m-0 text-base font-semibold">{title}</h2><p className="mb-5 mt-1 text-xs text-[var(--color-text-muted)]">{description}</p>{children}</section>;
 }
 
-function InvoiceItemsTable({ editable, invoice, onEdit, onRemove }: { editable: boolean; invoice: InvoiceDto; onEdit: (item: InvoiceItemDto) => void; onRemove: (item: InvoiceItemDto) => void }) {
-  return <div className="overflow-x-auto"><table className="w-full min-w-[680px] border-collapse text-sm"><thead className="bg-[var(--color-bg-subtle)] text-left text-xs uppercase tracking-wide text-[var(--color-text-muted)]"><tr><th className="px-3 py-2">Description</th><th className="px-3 py-2 text-right">Quantity</th><th className="px-3 py-2 text-right">Rate</th><th className="px-3 py-2 text-right">Amount</th>{editable ? <th className="px-3 py-2 text-right">Actions</th> : null}</tr></thead><tbody className="divide-y divide-[var(--color-border-default)]">{invoice.items.map((item) => <tr key={item.id}><td className="px-3 py-3"><strong>{item.description}</strong>{item.kind === "time" ? <details className="mt-1"><summary className="cursor-pointer text-xs font-semibold text-[var(--color-accent-active)]">View {item.sources.length} source {item.sources.length === 1 ? "entry" : "entries"}</summary><ul className="mb-0 mt-2 grid gap-1 pl-5 text-xs text-[var(--color-text-secondary)]">{item.sources.map((source) => <li key={source.id}>{source.workDate} · {source.description} · {source.projectName}{source.taskName ? ` / ${source.taskName}` : ""} · {formatDuration(source.durationSeconds)} · {source.currency} {formatMoney(source.hourlyRate, source.currency)}/hr · {source.currency} {formatMoney(source.amount, source.currency)}</li>)}</ul></details> : <span className="mt-1 block text-xs text-[var(--color-text-muted)]">Manual Item</span>}</td><td className="px-3 py-3 text-right tabular-nums">{formatQuantity(item.quantity)}</td><td className="px-3 py-3 text-right tabular-nums">{invoice.currency} {formatMoney(item.unitPrice, invoice.currency)}</td><td className="px-3 py-3 text-right font-semibold tabular-nums">{invoice.currency} {formatMoney(item.amount, invoice.currency)}</td>{editable ? <td className="px-3 py-3 text-right"><div className="flex justify-end gap-1">{item.kind === "manual" ? <Button size="sm" variant="quiet" onClick={() => onEdit(item)}>Edit</Button> : null}<Button size="sm" variant="quiet" onClick={() => onRemove(item)}>Remove</Button></div></td> : null}</tr>)}</tbody></table></div>;
+function InvoiceItemsTable({ currency, editable, items, onEdit, onRemove }: { currency: string; editable: boolean; items: EditorInvoiceItem[]; onEdit: (item: EditorInvoiceItem) => void; onRemove: (item: EditorInvoiceItem) => void }) {
+  return <div className="overflow-x-auto"><table className="w-full min-w-[680px] border-collapse text-sm"><thead className="bg-[var(--color-bg-subtle)] text-left text-xs uppercase tracking-wide text-[var(--color-text-muted)]"><tr><th className="px-3 py-2">Description</th><th className="px-3 py-2 text-right">Quantity</th><th className="px-3 py-2 text-right">Rate</th><th className="px-3 py-2 text-right">Amount</th>{editable ? <th className="px-3 py-2 text-right">Actions</th> : null}</tr></thead><tbody className="divide-y divide-[var(--color-border-default)]">{items.map((item) => <tr key={item.id}><td className="px-3 py-3"><strong>{item.description}</strong>{item.kind === "time" ? <details className="mt-1"><summary className="cursor-pointer text-xs font-semibold text-[var(--color-accent-active)]">View {item.sources.length} source {item.sources.length === 1 ? "entry" : "entries"}</summary><ul className="mb-0 mt-2 grid gap-1 pl-5 text-xs text-[var(--color-text-secondary)]">{item.sources.map((source) => <li key={source.id}>{source.workDate} · {source.description} · {source.projectName}{source.taskName ? ` / ${source.taskName}` : ""} · {formatDuration(source.durationSeconds)} · {source.currency} {formatMoney(source.hourlyRate, source.currency)}/hr · {source.currency} {formatMoney(source.amount, source.currency)}</li>)}</ul></details> : <span className="mt-1 block text-xs text-[var(--color-text-muted)]">Manual Item</span>}</td><td className="px-3 py-3 text-right tabular-nums">{formatQuantity(item.quantity)}</td><td className="px-3 py-3 text-right tabular-nums">{currency} {formatMoney(item.unitPrice, currency)}</td><td className="px-3 py-3 text-right font-semibold tabular-nums">{currency} {formatMoney(item.amount, currency)}</td>{editable ? <td className="px-3 py-3 text-right"><div className="flex justify-end gap-1">{item.kind === "manual" ? <Button size="sm" variant="quiet" onClick={() => onEdit(item)}>Edit</Button> : null}<Button size="sm" variant="quiet" onClick={() => onRemove(item)}>Remove</Button></div></td> : null}</tr>)}</tbody></table></div>;
 }
 
-function InvoiceTotals({ currency, invoice }: { currency: string; invoice: InvoiceDto | null }) {
-  const values = invoice ?? { subtotal: "0", discountAmount: "0", taxableSubtotal: "0", taxAmount: "0", total: "0" };
+function InvoiceTotals({ currency, invoice, preview }: { currency: string; invoice: InvoiceDto | null; preview: InvoiceCalculation | null }) {
+  const values = invoice ?? preview ?? { subtotal: "0", discountAmount: "0", taxableSubtotal: "0", taxAmount: "0", total: "0" };
   return <dl className="mt-5 grid gap-2 border-t border-[var(--color-border-default)] pt-4 text-sm"><TotalRow label="Subtotal" value={formatMoney(values.subtotal, currency)} /><TotalRow label="Discount" value={`−${formatMoney(values.discountAmount, currency)}`} /><TotalRow label="Taxable" value={formatMoney(values.taxableSubtotal, currency)} /><TotalRow label="Tax" value={formatMoney(values.taxAmount, currency)} /><div className="mt-2 flex justify-between border-t border-[var(--color-border-strong)] pt-3 text-lg font-semibold"><dt>Total</dt><dd className="m-0 tabular-nums">{currency} {formatMoney(values.total, currency)}</dd></div></dl>;
 }
 
 function TotalRow({ label, value }: { label: string; value: string }) { return <div className="flex justify-between gap-4"><dt className="text-[var(--color-text-secondary)]">{label}</dt><dd className="m-0 tabular-nums">{value}</dd></div>; }
 
-function ImportTimeDialog({ invoice, onOpenChange, today }: { invoice: InvoiceDto; onOpenChange: (open: boolean) => void; today: string }) {
+function ImportTimeDialog({ clientId, clientName, currency, invoice, onOpenChange, onStage, staged, today }: { clientId: string; clientName: string; currency: string; invoice: InvoiceDto | null; onOpenChange: (open: boolean) => void; onStage: (value: StagedTimeImport) => void; staged: StagedTimeImport | null; today: string }) {
   const queryClient = useQueryClient();
-  const initial = getPresetRange("this-month", today);
+  const initial = staged?.input ?? getPresetRange("this-month", today);
   const [range, setRange] = useState(initial);
-  const [grouping, setGrouping] = useState<InvoiceGrouping>("project");
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const eligible = useQuery({ queryKey: invoiceKeys.eligible(invoice.id, range), queryFn: () => getEligibleTime(invoice.id, range) });
+  const [grouping, setGrouping] = useState<InvoiceGrouping>(staged?.input.grouping ?? "project");
+  const [selected, setSelected] = useState<Set<string>>(new Set(staged?.input.timeEntryIds ?? []));
+  const contextQuery = { ...range, clientId, currency };
+  const eligible = useQuery({ queryKey: invoice ? invoiceKeys.eligible(invoice.id, range) : invoiceKeys.eligibleForContext(contextQuery), queryFn: () => invoice ? getEligibleTime(invoice.id, range) : getEligibleTimeForContext(contextQuery) });
   const selectedEntries = eligible.data?.entries.filter((entry) => selected.has(entry.id)) ?? [];
   const mutation = useMutation({
-    mutationFn: () => importInvoiceTime(invoice.id, { ...range, timeEntryIds: [...selected], grouping }),
+    mutationFn: () => importInvoiceTime(invoice!.id, { ...range, timeEntryIds: [...selected], grouping }),
     onSuccess: ({ invoice: saved }) => { refreshInvoiceState(queryClient, saved); onOpenChange(false); },
   });
-  return <Dialog open onOpenChange={onOpenChange} title="Import eligible Time" description={`Only billable, Not invoiced ${invoice.currency} Time for ${invoice.clientName} is shown.` } footer={<><DialogClose asChild><Button variant="secondary">Cancel</Button></DialogClose><Button disabled={!selected.size || mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? "Importing…" : `Import ${selected.size} selected`}</Button></>}>
+  const importSelected = () => {
+    if (invoice) mutation.mutate();
+    else {
+      onStage({ input: { ...range, timeEntryIds: [...selected], grouping }, entries: selectedEntries });
+      onOpenChange(false);
+    }
+  };
+  const unavailableSelection = Boolean(selected.size && eligible.data && selectedEntries.length !== selected.size);
+  return <Dialog open onOpenChange={onOpenChange} title="Import eligible Time" description={`Only billable, Not invoiced ${currency} Time for ${clientName} is shown.` } footer={<><DialogClose asChild><Button variant="secondary">Cancel</Button></DialogClose><Button disabled={!selected.size || eligible.isPending || eligible.isError || unavailableSelection || mutation.isPending} onClick={importSelected}>{mutation.isPending ? "Importing…" : `Import ${selected.size} selected`}</Button></>}>
     <div className="grid gap-4">
       <DateRangePicker from={range.from} to={range.to} preset="custom" presets={dateRangePresetOptions} onPresetChange={(preset) => { if (preset !== "custom") { setRange(getPresetRange(preset as Exclude<DateRangePreset, "custom">, today)); setSelected(new Set()); } }} onChange={(value) => { setRange(value); setSelected(new Set()); }} />
       <Field htmlFor="invoiceGrouping" label="Grouping"><Select id="invoiceGrouping" value={grouping} onChange={(event) => setGrouping(event.target.value as InvoiceGrouping)}><option value="project">Project</option><option value="task">Task</option><option value="individual">Individual</option></Select></Field>
       {eligible.isPending ? <p role="status">Loading eligible Time…</p> : eligible.isError ? <InlineError>Eligible Time could not be loaded.</InlineError> : eligible.data.entries.length === 0 ? <p className="m-0 rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] p-4 text-sm">No billable, Not invoiced Time was found for this Client, currency, and period.</p> : <>
-        <div className="flex flex-wrap items-center justify-between gap-2"><p className="m-0 text-sm"><strong>{eligible.data.count}</strong> eligible · <strong>{formatDuration(eligible.data.totalDurationSeconds)}</strong> · <strong>{invoice.currency} {formatMoney(eligible.data.totalAmount, invoice.currency)}</strong></p><div className="flex gap-2"><Button size="sm" variant="quiet" onClick={() => setSelected(new Set(eligible.data.entries.map((entry) => entry.id)))}>Select all</Button><Button size="sm" variant="quiet" onClick={() => setSelected(new Set())}>Select none</Button></div></div>
+        <div className="flex flex-wrap items-center justify-between gap-2"><p className="m-0 text-sm"><strong>{eligible.data.count}</strong> eligible · <strong>{formatDuration(eligible.data.totalDurationSeconds)}</strong> · <strong>{currency} {formatMoney(eligible.data.totalAmount, currency)}</strong></p><div className="flex gap-2"><Button size="sm" variant="quiet" onClick={() => setSelected(new Set(eligible.data.entries.map((entry) => entry.id)))}>Select all</Button><Button size="sm" variant="quiet" onClick={() => setSelected(new Set())}>Select none</Button></div></div>
         <ul className="m-0 max-h-72 list-none divide-y divide-[var(--color-border-default)] overflow-y-auto rounded-[var(--radius-md)] border border-[var(--color-border-default)] p-0">{eligible.data.entries.map((entry) => <li key={entry.id}><label className="flex cursor-pointer items-start gap-3 p-3 text-sm"><Checkbox checked={selected.has(entry.id)} onCheckedChange={(checked) => setSelected((current) => { const next = new Set(current); if (checked === true) next.add(entry.id); else next.delete(entry.id); return next; })} /><span className="min-w-0 flex-1"><strong className="block">{entry.description}</strong><span className="text-xs text-[var(--color-text-secondary)]">{entry.workDate} · {entry.projectName}{entry.taskName ? ` / ${entry.taskName}` : ""}</span></span><span className="text-right tabular-nums"><strong>{formatDuration(entry.durationSeconds)}</strong><span className="block text-xs text-[var(--color-text-secondary)]">{entry.currency} {formatMoney(entry.hourlyRate, entry.currency)}/hr · {formatMoney(entry.amount, entry.currency)}</span></span></label></li>)}</ul>
-        <p aria-live="polite" className="m-0 text-sm">Selected: <strong>{selected.size}</strong> · <strong>{formatDuration(selectedEntries.reduce((sum, entry) => sum + entry.durationSeconds, 0))}</strong> · <strong>{invoice.currency} {formatMoney(sumDecimalStrings(selectedEntries.map((entry) => entry.amount)), invoice.currency)}</strong></p>
+        <p aria-live="polite" className="m-0 text-sm">Selected: <strong>{selected.size}</strong> · <strong>{formatDuration(selectedEntries.reduce((sum, entry) => sum + entry.durationSeconds, 0))}</strong> · <strong>{currency} {formatMoney(sumDecimalStrings(selectedEntries.map((entry) => entry.amount)), currency)}</strong></p>
       </>}
       {mutation.isError ? <InlineError>{mutation.error instanceof Error ? mutation.error.message : "Time could not be imported."} Your selection is unchanged.</InlineError> : null}
+      {unavailableSelection ? <InlineError>Some previously selected Time is no longer available. Remove the staged line or choose an available selection.</InlineError> : null}
     </div>
   </Dialog>;
 }
 
-function ManualItemDialog({ invoice, item, onOpenChange }: { invoice: InvoiceDto; item: InvoiceItemDto | null; onOpenChange: (open: boolean) => void }) {
+function ManualItemDialog({ currency, invoice, item, onOpenChange, onStage }: { currency: string; invoice: InvoiceDto | null; item: EditorInvoiceItem | null; onOpenChange: (open: boolean) => void; onStage: (input: InvoiceManualItemInput, id?: string) => void }) {
   const queryClient = useQueryClient();
   const { register, handleSubmit, setError, formState: { errors } } = useForm<InvoiceManualItemInput>({ resolver: zodResolver(InvoiceManualItemInputSchema), defaultValues: item ? { description: item.description, quantity: item.quantity, unitPrice: item.unitPrice } : { description: "", quantity: "1", unitPrice: "0" } });
-  const mutation = useMutation({ mutationFn: (values: InvoiceManualItemInput) => item ? updateManualInvoiceItem(invoice.id, item.id, values) : addManualInvoiceItem(invoice.id, values), onSuccess: ({ invoice: saved }) => { refreshInvoiceState(queryClient, saved); onOpenChange(false); }, onError: (error) => applyServerErrors(error, setError) });
-  return <Dialog open onOpenChange={onOpenChange} title={item ? "Edit manual Item" : "Add manual Item"} description="Manual Items are independent from tracked Time." footer={<><DialogClose asChild><Button variant="secondary">Cancel</Button></DialogClose><Button form="manualItemForm" type="submit" disabled={mutation.isPending}>{mutation.isPending ? "Saving…" : "Save Item"}</Button></>}><form id="manualItemForm" className="grid gap-4" onSubmit={(event) => void handleSubmit((values) => mutation.mutate(values))(event)}><Field htmlFor="itemDescription" label="Description" error={errors.description?.message}><TextInput id="itemDescription" autoFocus {...register("description")} /></Field><div className="grid grid-cols-2 gap-4"><Field htmlFor="itemQuantity" label="Quantity" error={errors.quantity?.message}><TextInput id="itemQuantity" inputMode="decimal" {...register("quantity")} /></Field><Field htmlFor="itemUnitPrice" label={`Unit price (${invoice.currency})`} error={errors.unitPrice?.message}><TextInput id="itemUnitPrice" inputMode="decimal" {...register("unitPrice")} /></Field></div>{mutation.isError ? <InlineError>{mutation.error instanceof Error ? mutation.error.message : "Item could not be saved."} Your entries are still here.</InlineError> : null}</form></Dialog>;
+  const mutation = useMutation({ mutationFn: (values: InvoiceManualItemInput) => item ? updateManualInvoiceItem(invoice!.id, item.id, values) : addManualInvoiceItem(invoice!.id, values), onSuccess: ({ invoice: saved }) => { refreshInvoiceState(queryClient, saved); onOpenChange(false); }, onError: (error) => applyServerErrors(error, setError) });
+  const submit = (values: InvoiceManualItemInput) => invoice ? mutation.mutate(values) : onStage(values, item?.id);
+  return <Dialog open onOpenChange={onOpenChange} title={item ? "Edit manual Item" : "Add manual Item"} description="Manual Items are independent from tracked Time." footer={<><DialogClose asChild><Button variant="secondary">Cancel</Button></DialogClose><Button form="manualItemForm" type="submit" disabled={mutation.isPending}>{mutation.isPending ? "Saving…" : "Save Item"}</Button></>}><form id="manualItemForm" className="grid gap-4" onSubmit={(event) => void handleSubmit(submit)(event)}><Field htmlFor="itemDescription" label="Description" error={errors.description?.message}><TextInput id="itemDescription" autoFocus {...register("description")} /></Field><div className="grid grid-cols-2 gap-4"><Field htmlFor="itemQuantity" label="Quantity" error={errors.quantity?.message}><TextInput id="itemQuantity" inputMode="decimal" {...register("quantity")} /></Field><Field htmlFor="itemUnitPrice" label={`Unit price (${currency})`} error={errors.unitPrice?.message}><TextInput id="itemUnitPrice" inputMode="decimal" {...register("unitPrice")} /></Field></div>{mutation.isError ? <InlineError>{mutation.error instanceof Error ? mutation.error.message : "Item could not be saved."} Your entries are still here.</InlineError> : null}</form></Dialog>;
 }
 
-function RemoveItemDialog({ invoice, item, onOpenChange }: { invoice: InvoiceDto; item: InvoiceItemDto; onOpenChange: (open: boolean) => void }) {
+function RemoveItemDialog({ invoice, item, onOpenChange, onRemoveLocal }: { invoice: InvoiceDto | null; item: EditorInvoiceItem; onOpenChange: (open: boolean) => void; onRemoveLocal: () => void }) {
   const queryClient = useQueryClient();
-  const mutation = useMutation({ mutationFn: () => removeInvoiceItem(invoice.id, item.id), onSuccess: ({ invoice: saved }) => { refreshInvoiceState(queryClient, saved); onOpenChange(false); } });
-  return <Dialog open onOpenChange={onOpenChange} title={`Remove “${item.description}”?`} description={item.kind === "time" ? `${item.sources.length} source Time ${item.sources.length === 1 ? "Entry" : "Entries"} will become Not invoiced and eligible again.` : "The manual Item will be removed."} footer={<><DialogClose asChild><Button variant="secondary">Cancel</Button></DialogClose><Button variant="danger" disabled={mutation.isPending} onClick={() => mutation.mutate()}>{mutation.isPending ? "Removing…" : "Remove Item"}</Button></>} >{mutation.isError ? <InlineError>{mutation.error instanceof Error ? mutation.error.message : "Item could not be removed."}</InlineError> : <p className="m-0 text-sm text-[var(--color-text-secondary)]">Invoice totals will be recalculated by the server.</p>}</Dialog>;
+  const mutation = useMutation({ mutationFn: () => removeInvoiceItem(invoice!.id, item.id), onSuccess: ({ invoice: saved }) => { refreshInvoiceState(queryClient, saved); onOpenChange(false); } });
+  const remove = () => invoice ? mutation.mutate() : onRemoveLocal();
+  const description = item.kind === "time" ? invoice ? `${item.sources.length} source Time ${item.sources.length === 1 ? "Entry" : "Entries"} will become Not invoiced and eligible again.` : `${item.sources.length} staged source Time ${item.sources.length === 1 ? "Entry" : "Entries"} will be removed. No Time has been reserved yet.` : "The manual Item will be removed.";
+  return <Dialog open onOpenChange={onOpenChange} title={`Remove “${item.description}”?`} description={description} footer={<><DialogClose asChild><Button variant="secondary">Cancel</Button></DialogClose><Button variant="danger" disabled={mutation.isPending} onClick={remove}>{mutation.isPending ? "Removing…" : "Remove Item"}</Button></>} >{mutation.isError ? <InlineError>{mutation.error instanceof Error ? mutation.error.message : "Item could not be removed."}</InlineError> : <p className="m-0 text-sm text-[var(--color-text-secondary)]">{invoice ? "Invoice totals will be recalculated by the server." : "Preview totals will update immediately."}</p>}</Dialog>;
 }
 
 function LifecycleActions({ hasUnsavedChanges, invoice, onAction }: { hasUnsavedChanges: boolean; invoice: InvoiceDto; onAction: (action: "sent" | "paid" | "void") => void }) {
@@ -290,6 +331,60 @@ function PreviewParty({ label, name, values }: { label: string; name: string; va
 
 function InvoicePreviewTotals({ model }: { model: InvoicePresentationModel }) {
   return <dl className="grid gap-2"><TotalRow label="Subtotal" value={formatMoney(model.subtotal, model.currency)} /><TotalRow label="Discount" value={`−${formatMoney(model.discountAmount, model.currency)}`} /><TotalRow label="Taxable" value={formatMoney(model.taxableSubtotal, model.currency)} /><TotalRow label="Tax" value={formatMoney(model.taxAmount, model.currency)} /><div className="flex justify-between border-t border-[var(--color-border-strong)] pt-3 text-lg font-semibold"><dt>Total</dt><dd className="m-0 tabular-nums">{model.currency} {formatMoney(model.total, model.currency)}</dd></div></dl>;
+}
+
+function buildStagedItems(manualItems: StagedManualItem[], timeImport: StagedTimeImport | null, currency: string): EditorInvoiceItem[] {
+  const timeItems = timeImport
+    ? groupInvoiceTime(timeImport.entries, timeImport.input.grouping, currency).map((group, index) => ({
+        id: `staged-time-${index}-${group.sourceIds.join("-")}`,
+        kind: "time" as const,
+        description: group.description,
+        quantity: group.quantity,
+        unitPrice: group.unitPrice,
+        amount: group.amount,
+        sources: group.sourceIds.map((id) => timeImport.entries.find((entry) => entry.id === id)!),
+      }))
+    : [];
+  return [
+    ...timeItems,
+    ...manualItems.map(({ id, input }) => ({
+      id,
+      kind: "manual" as const,
+      ...input,
+      amount: calculateInvoiceLineAmount(input.quantity, input.unitPrice, currency),
+      sources: [],
+    })),
+  ];
+}
+
+function calculatePreview(items: EditorInvoiceItem[], currency: string, discountType: InvoiceFormValues["discountType"], discountValue: string, taxPercent: string): InvoiceCalculation | null {
+  try {
+    return calculateInvoice({
+      currency,
+      lines: items.map((item) => ({ quantity: item.quantity, unitPrice: item.unitPrice })),
+      discountType,
+      discountValue,
+      taxPercent,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function removeSourcesFromStagedImport(staged: StagedTimeImport | null, sourceIds: string[]): StagedTimeImport | null {
+  if (!staged) return null;
+  const removed = new Set(sourceIds);
+  const entries = staged.entries.filter((entry) => !removed.has(entry.id));
+  if (!entries.length) return null;
+  return {
+    entries,
+    input: { ...staged.input, timeEntryIds: staged.input.timeEntryIds.filter((id) => !removed.has(id)) },
+  };
+}
+
+function nextStagedItemId(): string {
+  stagedItemSequence += 1;
+  return `staged-manual-${stagedItemSequence}`;
 }
 
 function refreshInvoiceState(queryClient: ReturnType<typeof useQueryClient>, invoice: InvoiceDto) {

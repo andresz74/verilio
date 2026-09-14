@@ -692,8 +692,13 @@ Example query keys:
 
 ["invoices", filters]
 ["invoice", invoiceId]
+["invoices", "eligible", "new", compositionContext]
 ["invoice", invoiceId, "eligible-time"]
 ```
+
+The context-based eligible-Time query supports composition of a brand-new unsaved Invoice.
+It does not create an Invoice or reserve Time. The Invoice-ID query represents server state for
+an already-saved Draft.
 
 ## Mutation Strategy
 
@@ -921,6 +926,7 @@ GET    /api/v1/reports/detailed.csv
 
 GET    /api/v1/invoices
 POST   /api/v1/invoices
+GET    /api/v1/invoices/eligible-time
 GET    /api/v1/invoices/:id
 PATCH  /api/v1/invoices/:id
 GET    /api/v1/invoices/:id/eligible-time
@@ -932,6 +938,33 @@ GET    /api/v1/invoices/:id/pdf
 ```
 
 Exact endpoint naming may evolve, but commands that enforce lifecycle rules should remain explicit.
+
+The non-ID eligible-Time endpoint accepts the current unsaved composition context:
+
+```text
+clientId
+currency
+from
+to
+```
+
+It is used only to discover eligible Time while composing a new Invoice. The Invoice-ID eligible
+and import endpoints are used to add Time to an already-saved Draft.
+
+Initial `POST /api/v1/invoices` may include staged composition data in addition to the Invoice
+fields:
+
+```text
+manualItems[]
+
+timeImport
+  from
+  to
+  timeEntryIds[]
+  grouping: project | task | individual
+```
+
+These fields represent provisional browser composition until the create transaction succeeds.
 
 ---
 
@@ -1617,6 +1650,10 @@ A time entry linked to a non-void invoice is considered reserved/invoiced for im
 
 That includes Draft.
 
+Locally staged time on an unsaved New Invoice is not reserved. Eligible-Time discovery and local
+selection do not create Invoice Item/Time Entry relationships and do not change report or
+Timesheet invoice state.
+
 The eligible-time query must exclude those entries.
 
 This prevents double billing across:
@@ -1633,14 +1670,32 @@ High-risk invoice commands must use database transactions.
 
 Examples:
 
-## Save/import time
+## Initial Save Draft with staged composition
 
 Transaction should cover:
 
-- Invoice update.
+- Invoice creation and number allocation.
+- Seller/client snapshot persistence.
 - Invoice item writes.
 - Time-entry relationship writes.
+- Authoritative Invoice calculations.
 - Validation that source time is still eligible.
+
+The server must lock/revalidate the selected source Time during the transaction. If another
+Invoice reserved any selected entry after discovery, the create must fail without partially
+persisting the Invoice, Items, relationships, reservation, or number allocation.
+
+## Import time into a saved Draft
+
+The Invoice-ID import command should transactionally cover:
+
+- Validation that the Invoice is an editable Draft.
+- Revalidation that source Time is still eligible.
+- Invoice Item and Time-entry relationship writes.
+- Authoritative Invoice recalculation.
+
+Initial Draft creation and saved-Draft import should reuse the same eligibility and grouping
+domain behavior so their billing rules cannot drift.
 
 ## Void invoice
 
@@ -1714,6 +1769,9 @@ while persisted `status` remains `sent`.
 ## Approved Architecture Decision
 
 Assign the invoice number on first successful Draft save.
+
+Opening Import Time, staging selected Time, or adding a staged manual Item must not allocate an
+Invoice number. Those composition actions do not implicitly save the Draft.
 
 The numbering operation must be transaction-safe.
 
@@ -2105,9 +2163,10 @@ setup
 → stop timer
 → add manual time
 → report
-→ create invoice
-→ import time
+→ open New Invoice
+→ compose/import time locally
 → save draft
+→ source time becomes reserved
 → generate PDF
 → mark sent
 → mark paid
@@ -2635,16 +2694,42 @@ The invoice editor is the largest form in the MVP.
 
 Use React Hook Form for editable invoice fields.
 
-Imported-time selection is server-backed domain state and should be handled deliberately.
+## Unsaved New Invoice
 
-Recommended approach:
+- Invoice fields are editor/form state.
+- Manual Items may be staged in local editor state.
+- Imported source-Time IDs, date range, grouping, and the local line-item representation may be
+  staged in local editor state.
+- Eligible-Time discovery is server-backed read state but does not persist an Invoice.
+- Staged Time is not reserved or Invoiced.
+- No Invoice number exists yet.
 
-1. Query eligible time.
+The browser may use shared domain functions for a calculation preview. Staged data remains
+provisional and server output remains authoritative.
+
+## First Save Draft
+
+On explicit Save Draft:
+
+1. Submit Invoice fields, staged manual Items, and staged source-Time selection/grouping.
+2. Server locks and revalidates every selected source Time Entry.
+3. Server transactionally allocates the Invoice number and creates the Invoice, snapshots, Items,
+   Time-entry relationships, authoritative calculations, and reservation.
+4. Frontend replaces local composition state with the saved Invoice response.
+
+If revalidation fails, do not report success or discard the editor state. Preserve fields, notes,
+manual Items, and staged Time so the user can remove unavailable entries, re-import, and retry.
+
+## Saved Draft
+
+For an already-saved Draft:
+
+1. Query eligible Time with the Invoice-ID endpoint.
 2. User selects entries locally.
-3. User submits import command.
-4. Server validates eligibility again.
-5. Server creates/rebuilds invoice items and relationships transactionally.
-6. Frontend refreshes invoice query.
+3. User submits the Invoice-ID import command.
+4. Server revalidates eligibility and writes Items/relationships transactionally.
+5. Linked source Time is immediately reserved/Invoiced.
+6. Frontend refreshes the saved Invoice query.
 
 Do not trust a stale browser selection to bypass current invoice eligibility.
 
@@ -2655,6 +2740,10 @@ Do not trust a stale browser selection to bypass current invoice eligibility.
 Do not implement aggressive autosave for invoice editing in first MVP unless UX testing establishes a need.
 
 Prefer explicit **Save Draft** with unsaved-changes protection.
+
+Import Time, selecting/grouping source Time, and adding a manual Item while composing a New
+Invoice must not implicitly create or autosave a Draft. Save Draft is the first persistence and
+reservation boundary for that composition.
 
 Reason:
 

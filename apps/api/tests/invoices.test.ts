@@ -96,6 +96,7 @@ function service(): InvoiceServiceContract {
     create: vi.fn().mockResolvedValue(invoice),
     update: vi.fn().mockResolvedValue(invoice),
     eligibleTime: vi.fn().mockResolvedValue(eligible),
+    eligibleTimeForContext: vi.fn().mockResolvedValue({ ...eligible, invoiceId: null }),
     importTime: vi.fn().mockResolvedValue(invoice),
     addManualItem: vi.fn().mockResolvedValue(invoice),
     updateManualItem: vi.fn().mockResolvedValue(invoice),
@@ -116,6 +117,9 @@ describe("invoice routes", () => {
     expect((await app.inject({ method: "GET", url: "/api/v1/invoices" })).statusCode).toBe(200);
     expect((await app.inject({ method: "POST", url: "/api/v1/invoices", payload: draftInput })).statusCode).toBe(201);
     expect(invoiceService.create).toHaveBeenCalledWith(draftInput);
+    const composedDraft = { ...draftInput, manualItems: [{ description: "Manual", quantity: "1", unitPrice: "25" }], timeImport: { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entryId] } };
+    expect((await app.inject({ method: "POST", url: "/api/v1/invoices", payload: composedDraft })).statusCode).toBe(201);
+    expect(invoiceService.create).toHaveBeenLastCalledWith({ ...composedDraft, timeImport: { ...composedDraft.timeImport, grouping: "project" } });
     expect((await app.inject({ method: "GET", url: `/api/v1/invoices/${invoiceId}` })).statusCode).toBe(200);
     expect((await app.inject({ method: "GET", url: `/api/v1/invoices/${invoiceId}/presentation` })).json()).toEqual({ presentation });
     const pdf = await app.inject({ method: "GET", url: `/api/v1/invoices/${invoiceId}/pdf` });
@@ -125,6 +129,8 @@ describe("invoice routes", () => {
     expect((await app.inject({ method: "PATCH", url: `/api/v1/invoices/${invoiceId}`, payload: { ...draftInput, taxPercent: "6" } })).statusCode).toBe(200);
     expect((await app.inject({ method: "GET", url: `/api/v1/invoices/${invoiceId}/eligible-time?from=2026-09-01&to=2026-09-30` })).statusCode).toBe(200);
     expect(invoiceService.eligibleTime).toHaveBeenCalledWith(invoiceId, { from: "2026-09-01", to: "2026-09-30" });
+    expect((await app.inject({ method: "GET", url: `/api/v1/invoices/eligible-time?clientId=${clientId}&currency=USD&from=2026-09-01&to=2026-09-30` })).statusCode).toBe(200);
+    expect(invoiceService.eligibleTimeForContext).toHaveBeenCalledWith({ clientId, currency: "USD", from: "2026-09-01", to: "2026-09-30" });
     expect((await app.inject({ method: "POST", url: `/api/v1/invoices/${invoiceId}/import-time`, payload: { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entryId] } })).statusCode).toBe(200);
     expect(invoiceService.importTime).toHaveBeenCalledWith(invoiceId, { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entryId], grouping: "project" });
     expect((await app.inject({ method: "POST", url: `/api/v1/invoices/${invoiceId}/items`, payload: { description: "Consulting", quantity: "2", unitPrice: "100" } })).statusCode).toBe(201);

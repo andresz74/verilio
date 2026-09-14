@@ -2,6 +2,7 @@ import {
   EligibleTimeQuerySchema,
   ImportTimeInputSchema,
   InvoiceCreateInputSchema,
+  InvoiceEligibleTimeContextQuerySchema,
   InvoiceIdParamsSchema,
   InvoiceItemParamsSchema,
   InvoiceManualItemInputSchema,
@@ -16,6 +17,11 @@ import type { InvoiceServiceContract } from "./invoice-service.js";
 
 export function registerInvoiceRoutes(app: FastifyInstance, service: InvoiceServiceContract): void {
   app.get("/api/v1/invoices", async () => ({ invoices: await service.list() }));
+
+  app.get("/api/v1/invoices/eligible-time", async (request) => {
+    const input = parseOrThrow(InvoiceEligibleTimeContextQuerySchema.safeParse(request.query));
+    return service.eligibleTimeForContext(input);
+  });
 
   app.post("/api/v1/invoices", async (request, reply) => {
     const input = parseOrThrow(InvoiceCreateInputSchema.safeParse(request.body));

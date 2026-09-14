@@ -1091,9 +1091,34 @@ Implement list/create/get/edit-Draft.
 
 Generic PATCH must not allow arbitrary state transitions.
 
+Initial Invoice creation may include staged manual Items and one staged Time-import selection:
+
+```text
+manualItems[]
+
+timeImport
+  from
+  to
+  timeEntryIds[]
+  grouping: project | task | individual
+```
+
+This is submitted only when the user explicitly selects Save Draft. Import Time and Add manual
+Item do not implicitly create or autosave an Invoice.
+
 ## M7.7 — Eligible Time Query
 
-Implement:
+For a brand-new unsaved Invoice, implement context-based discovery:
+
+```text
+GET /api/v1/invoices/eligible-time
+  ?clientId=...
+  &currency=...
+  &from=...
+  &to=...
+```
+
+For an already-saved Draft, retain:
 
 ```text
 GET /api/v1/invoices/:id/eligible-time
@@ -1109,9 +1134,22 @@ historical Time Entry currency matches Invoice currency
 not linked to a non-void invoice
 ```
 
+The two query paths must reuse the same eligibility rules. The non-ID query is read-only: it does
+not persist an Invoice, allocate a number, create relationships, or reserve selected Time.
+
 ## M7.8 — Import Time Transaction
 
-Implement:
+For an unsaved New Invoice:
+
+1. Query eligible Time from the current Client, currency, and date-range context.
+2. Select Time and grouping locally.
+3. Stage the resulting line-item representation in the editor.
+4. Include the staged selection in the explicit initial Save Draft request.
+5. Revalidate every selected entry on the server.
+6. Transactionally create the Invoice, allocate its number, persist snapshots/Items/relationships,
+   calculate totals, and reserve linked Time.
+
+For an already-saved Draft, retain the transactional command:
 
 ```text
 POST /api/v1/invoices/:id/import-time
@@ -1129,11 +1167,19 @@ individual
 
 Default: `project`.
 
+Initial Save Draft and saved-Draft import must share the same server eligibility, grouping, and
+double-invoicing protection. Two concurrent initial saves attempting to reserve the same Time
+Entry cannot both succeed; the losing transaction must return a stable conflict without partial
+Invoice, Item, relationship, reservation, or numbering writes.
+
 ## M7.9 — Draft Reservation
 
 Imported time is reserved immediately once linked to a saved Draft.
 
 It must disappear from other invoice-import queries and show as Invoiced in reports.
+
+Locally staged Time on an unsaved New Invoice is not linked, reserved, or Invoiced. Reservation
+begins only after the explicit Save Draft transaction succeeds.
 
 ## M7.10 — Remove Imported Time
 
@@ -1146,6 +1192,9 @@ Whole grouped-line removal is sufficient for MVP.
 Support description, quantity, unit price, amount.
 
 Reject negative amounts in MVP.
+
+Manual Items may be staged locally while composing a New Invoice and are persisted with the first
+successful Save Draft. On a saved Draft, the existing server-backed Item commands remain valid.
 
 ## M7.12 — Invoice List UI
 
@@ -1165,9 +1214,24 @@ Actions
 
 Use React Hook Form with explicit Save Draft.
 
+For a New Invoice, keep editable fields, staged manual Items, and staged Time
+selection/grouping in editor state. Render staged line Items and calculation previews without
+creating a temporary Invoice. Preserve that composition if Save Draft fails so the user can
+correct unavailable Time or validation errors and retry.
+
+After the first successful save, replace provisional editor state with the authoritative saved
+Draft response. Subsequent imports and Item changes use the saved-Draft commands.
+
 ## M7.14 — Import Dialog
 
 Display eligible count, duration, billable value, selectable entries, and grouping.
+
+The dialog supports both contexts:
+
+- Unsaved New Invoice: query by Client/currency/date context and stage the selection locally.
+- Saved Draft: query by Invoice ID and persist the import through the transactional command.
+
+Opening the dialog or selecting Import does not autosave a New Invoice.
 
 ## M7.15 — Traceability UI
 
@@ -1184,9 +1248,16 @@ Complete Invoiced/Not invoiced report filtering.
 
 ## M7 Exit Gate
 
-The user can create a Draft invoice, import billable uninvoiced time, group by project, add manual items, save, see source entries become invoiced, remove an item, and see source time become uninvoiced again.
+The user can open New Invoice, select a Client and import period, discover and stage billable
+uninvoiced Time, group by Project, stage manual Items, and then select Save Draft once. The server
+revalidates eligibility and atomically creates the Invoice, Items, source relationships,
+authoritative totals, number, and reservation. Only after that successful save do source entries
+become Invoiced.
 
-Double invoicing must be prevented.
+For a saved Draft, the user can import additional eligible Time transactionally, remove an
+imported Item, and see released source Time become uninvoiced and eligible again.
+
+Double invoicing must be prevented for saved-Draft imports and concurrent initial Draft saves.
 
 ---
 
@@ -1339,8 +1410,8 @@ configure profile
 → add manual time
 → Timesheet
 → Reports
-→ create invoice
-→ import time
+→ open New Invoice
+→ compose/import time
 → save Draft
 → verify Invoiced
 → PDF
@@ -1551,8 +1622,8 @@ S29  Detailed reports
 S30  Report filters
 S31  Charts/CSV P1
 S32  Invoice schema/domain
-S33  Invoice Draft API
-S34  Eligible-time/import API
+S33  Invoice create/save Draft API
+S34  Context and saved-Draft eligible-time/import API
 S35  Invoice editor
 S36  Import-time UI
 S37  Traceability/report invoice state

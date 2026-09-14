@@ -136,6 +136,60 @@ describe("M7 Invoice Draft persistence", () => {
 });
 
 describe("M7 eligible Time, reservation, grouping, and release", () => {
+  it("discovers eligible Time from unsaved context and atomically creates a composed Draft", async () => {
+    const own = await setupOwner(OWNER_A);
+    const other = await setupOwner(OWNER_B);
+    const timeService = new TimeEntryService(db, OWNER_A);
+    const eligibleEntry = await timeService.create({ mode: "duration", workDate: "2026-09-05", durationSeconds: 3_600, clientId: own.client.id, projectId: own.project.id, taskId: own.task.id, description: "Pre-save import", billable: true });
+    await timeService.create({ mode: "duration", workDate: "2026-09-05", durationSeconds: 600, clientId: own.client.id, projectId: own.project.id, taskId: null, description: "Non-billable", billable: false });
+    await timeService.create({ mode: "duration", workDate: "2026-08-31", durationSeconds: 600, clientId: own.client.id, projectId: own.project.id, taskId: null, description: "Outside period", billable: true });
+    const siblingClient = await new ClientService(db, OWNER_A).create(clientInput("Sibling Client"));
+    const siblingProject = await new ProjectService(db, OWNER_A).create(projectInput(siblingClient.id));
+    await timeService.create({ mode: "duration", workDate: "2026-09-05", durationSeconds: 600, clientId: siblingClient.id, projectId: siblingProject.id, taskId: null, description: "Other Client", billable: true });
+    const service = new InvoiceService(db, OWNER_A);
+
+    const beforeSave = await service.eligibleTimeForContext({ clientId: own.client.id, currency: "USD", from: "2026-09-01", to: "2026-09-30" });
+    expect(beforeSave).toMatchObject({ invoiceId: null, count: 1, totalDurationSeconds: 3_600, totalAmount: "85.00" });
+    expect(beforeSave.entries.map(({ id }) => id)).toEqual([eligibleEntry.id]);
+    await expect(service.eligibleTimeForContext({ clientId: other.client.id, currency: "USD", from: "2026-09-01", to: "2026-09-30" })).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+
+    const created = await service.create({
+      ...draftInput(own.client.id),
+      manualItems: [{ description: "Manual review", quantity: "1", unitPrice: "50" }],
+      timeImport: { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [eligibleEntry.id], grouping: "project" },
+    });
+    expect(created).toMatchObject({ invoiceNumber: "M7-1", subtotal: "135.00", total: "135.00" });
+    expect(created.items.map((item) => [item.kind, item.description, item.amount])).toEqual([
+      ["time", "Windows", "85.0000"],
+      ["manual", "Manual review", "50.0000"],
+    ]);
+    expect(created.items[0]?.sources.map(({ id }) => id)).toEqual([eligibleEntry.id]);
+    expect((await timeService.get(eligibleEntry.id))?.invoice?.id).toBe(created.id);
+    expect((await service.eligibleTimeForContext({ clientId: own.client.id, currency: "USD", from: "2026-09-01", to: "2026-09-30" })).entries).toEqual([]);
+  });
+
+  it("allows only one concurrent initial Draft save to reserve staged Time without partial writes", async () => {
+    const own = await setupOwner(OWNER_A);
+    const entry = await new TimeEntryService(db, OWNER_A).create({ mode: "duration", workDate: "2026-09-05", durationSeconds: 3_600, clientId: own.client.id, projectId: own.project.id, taskId: null, description: "Initial save race", billable: true });
+    const service = new InvoiceService(db, OWNER_A);
+    const input: InvoiceCreateInput = {
+      ...draftInput(own.client.id),
+      manualItems: [{ description: "Race manual Item", quantity: "1", unitPrice: "10" }],
+      timeImport: { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entry.id], grouping: "individual" },
+    };
+
+    const results = await Promise.allSettled([service.create(input), service.create(input)]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.find((result) => result.status === "rejected")).toMatchObject({ reason: { code: "TIME_ENTRY_ALREADY_INVOICED", statusCode: 409 } });
+    const persistedInvoices = await db.select().from(invoices).where(eq(invoices.userId, OWNER_A));
+    expect(persistedInvoices).toHaveLength(1);
+    const persistedItems = await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, persistedInvoices[0]!.id));
+    expect(persistedItems).toHaveLength(2);
+    expect(await db.select().from(invoiceItemTimeEntries).where(eq(invoiceItemTimeEntries.timeEntryId, entry.id))).toHaveLength(1);
+    const [profile] = await db.select().from(businessProfiles).where(eq(businessProfiles.userId, OWNER_A));
+    expect(profile?.nextInvoiceNumber).toBe(2);
+  });
+
   it("enforces historical currency/date/billable eligibility and keeps archived history eligible", async () => {
     const own = await setupOwner(OWNER_A);
     const timeService = new TimeEntryService(db, OWNER_A);
@@ -213,6 +267,17 @@ describe("M7 eligible Time, reservation, grouping, and release", () => {
 });
 
 describe("M7 manual Items and authoritative totals", () => {
+  it("supports manual-only and empty Drafts on the initial save", async () => {
+    const own = await setupOwner(OWNER_A);
+    const service = new InvoiceService(db, OWNER_A);
+    const manualOnly = await service.create({ ...draftInput(own.client.id), manualItems: [{ description: "Initial manual Item", quantity: "2", unitPrice: "25" }] });
+    expect(manualOnly).toMatchObject({ subtotal: "50.00", total: "50.00" });
+    expect(manualOnly.items).toHaveLength(1);
+    expect(manualOnly.items[0]).toMatchObject({ kind: "manual", description: "Initial manual Item", quantity: "2.000000000000", unitPrice: "25.0000" });
+    const empty = await service.create(draftInput(own.client.id));
+    expect(empty).toMatchObject({ subtotal: "0.00", total: "0.00", items: [] });
+  });
+
   it("creates, edits, removes manual Items and recalculates discount then tax", async () => {
     const own = await setupOwner(OWNER_A);
     const service = new InvoiceService(db, OWNER_A);

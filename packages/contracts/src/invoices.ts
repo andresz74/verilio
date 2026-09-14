@@ -48,12 +48,6 @@ function validateDraft(value: { issueDate: string; dueDate: string; discountType
   if (Number(value.taxPercent) > 100) context.addIssue({ code: "custom", path: ["taxPercent"], message: "Tax percentage cannot exceed 100%" });
 }
 
-export const InvoiceCreateInputSchema = z.object({
-  clientId: IdSchema,
-  ...invoiceDraftShape,
-}).superRefine(validateDraft);
-export type InvoiceCreateInput = z.infer<typeof InvoiceCreateInputSchema>;
-
 export const InvoiceUpdateInputSchema = z.object(invoiceDraftShape).superRefine(validateDraft);
 export type InvoiceUpdateInput = z.infer<typeof InvoiceUpdateInputSchema>;
 
@@ -173,10 +167,17 @@ export const InvoiceIdParamsSchema = z.object({ id: IdSchema });
 export const InvoiceItemParamsSchema = z.object({ id: IdSchema, itemId: IdSchema });
 export const InvoiceMarkPaidInputSchema = z.object({ paidAt: DateOnlySchema });
 export type InvoiceMarkPaidInput = z.infer<typeof InvoiceMarkPaidInputSchema>;
-export const EligibleTimeQuerySchema = z.object({ from: DateOnlySchema, to: DateOnlySchema }).refine(({ from, to }) => from <= to, { path: ["to"], message: "End date must be on or after start date" });
+const eligibleTimeQueryShape = { from: DateOnlySchema, to: DateOnlySchema };
+export const EligibleTimeQuerySchema = z.object(eligibleTimeQueryShape).refine(({ from, to }) => from <= to, { path: ["to"], message: "End date must be on or after start date" });
 export type EligibleTimeQuery = z.infer<typeof EligibleTimeQuerySchema>;
+export const InvoiceEligibleTimeContextQuerySchema = z.object({
+  ...eligibleTimeQueryShape,
+  clientId: IdSchema,
+  currency: CurrencyCodeSchema,
+}).refine(({ from, to }) => from <= to, { path: ["to"], message: "End date must be on or after start date" });
+export type InvoiceEligibleTimeContextQuery = z.infer<typeof InvoiceEligibleTimeContextQuerySchema>;
 export const EligibleTimeResponseSchema = z.object({
-  invoiceId: IdSchema,
+  invoiceId: IdSchema.nullable(),
   currency: CurrencyCodeSchema,
   entries: z.array(InvoiceSourceTimeSchema),
   count: z.number().int().nonnegative(),
@@ -192,3 +193,11 @@ export const ImportTimeInputSchema = z.object({
   grouping: InvoiceGroupingSchema.default("project"),
 }).refine(({ from, to }) => from <= to, { path: ["to"], message: "End date must be on or after start date" });
 export type ImportTimeInput = z.infer<typeof ImportTimeInputSchema>;
+
+export const InvoiceCreateInputSchema = z.object({
+  clientId: IdSchema,
+  ...invoiceDraftShape,
+  manualItems: z.array(InvoiceManualItemInputSchema).max(500).optional(),
+  timeImport: ImportTimeInputSchema.optional(),
+}).superRefine(validateDraft);
+export type InvoiceCreateInput = z.infer<typeof InvoiceCreateInputSchema>;

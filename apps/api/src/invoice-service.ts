@@ -2,6 +2,7 @@ import type {
   EligibleTimeQuery,
   EligibleTimeResponse,
   ImportTimeInput,
+  InvoiceEligibleTimeContextQuery,
   InvoiceCreateInput,
   InvoiceDto,
   InvoiceListItem,
@@ -58,6 +59,7 @@ export interface InvoiceServiceContract {
   get(id: string): Promise<InvoiceDto | null>;
   create(input: InvoiceCreateInput): Promise<InvoiceDto>;
   update(id: string, input: InvoiceUpdateInput): Promise<InvoiceDto | null>;
+  eligibleTimeForContext(input: InvoiceEligibleTimeContextQuery): Promise<EligibleTimeResponse>;
   eligibleTime(id: string, input: EligibleTimeQuery): Promise<EligibleTimeResponse | null>;
   importTime(id: string, input: ImportTimeInput): Promise<InvoiceDto | null>;
   addManualItem(id: string, input: InvoiceManualItemInput): Promise<InvoiceDto | null>;
@@ -113,9 +115,34 @@ export class InvoiceService implements InvoiceServiceContract {
           .limit(1);
         if (!client) throw invoiceValidation("clientId", "Choose a Client you can access.");
 
+        const timeGroups = input.timeImport
+          ? await this.prepareTimeImport(tx, {
+              clientId: client.id,
+              currency: input.currency,
+            }, input.timeImport)
+          : [];
+        const composedItems = [
+          ...timeGroups.map((group) => ({
+            kind: "time" as const,
+            description: group.description,
+            quantity: group.quantity,
+            unitPrice: group.unitPrice,
+            sourceIds: group.sourceIds,
+          })),
+          ...(input.manualItems ?? []).map((item) => ({
+            kind: "manual" as const,
+            description: item.description.trim(),
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+            sourceIds: [] as string[],
+          })),
+        ];
         const calculation = calculateOrThrow({
           currency: input.currency,
-          lines: [],
+          lines: composedItems.map((item) => ({
+            quantity: item.quantity,
+            unitPrice: item.unitPrice,
+          })),
           discountType: input.discountType,
           discountValue: input.discountValue,
           taxPercent: input.taxPercent,
@@ -159,6 +186,31 @@ export class InvoiceService implements InvoiceServiceContract {
           })
           .returning({ id: invoices.id });
         if (!created) throw new Error("Invoice insert returned no record");
+        for (const [sortOrder, item] of composedItems.entries()) {
+          const amount = calculation.lineAmounts[sortOrder];
+          if (!amount) throw new Error("Invoice calculation returned no line amount");
+          const [createdItem] = await tx
+            .insert(invoiceItems)
+            .values({
+              invoiceId: created.id,
+              kind: item.kind,
+              description: item.description,
+              quantity: item.quantity,
+              unitPrice: item.unitPrice,
+              amount,
+              sortOrder,
+            })
+            .returning({ id: invoiceItems.id });
+          if (!createdItem) throw new Error("Invoice Item insert returned no record");
+          if (item.sourceIds.length) {
+            await tx.insert(invoiceItemTimeEntries).values(
+              item.sourceIds.map((timeEntryId) => ({
+                invoiceItemId: createdItem.id,
+                timeEntryId,
+              })),
+            );
+          }
+        }
         await tx
           .update(businessProfiles)
           .set({ nextInvoiceNumber: profile.nextInvoiceNumber + 1, updatedAt: this.clock() })
@@ -206,10 +258,29 @@ export class InvoiceService implements InvoiceServiceContract {
     return found ? this.loadDtoRequired(id) : null;
   }
 
+  async eligibleTimeForContext(input: InvoiceEligibleTimeContextQuery): Promise<EligibleTimeResponse> {
+    const [client] = await this.db
+      .select({ id: clients.id })
+      .from(clients)
+      .where(and(eq(clients.id, input.clientId), eq(clients.userId, this.ownerId)))
+      .limit(1);
+    if (!client) throw invoiceValidation("clientId", "Choose a Client you can access.");
+    return this.queryEligibleTime(input.clientId, input.currency, input, null);
+  }
+
   async eligibleTime(id: string, input: EligibleTimeQuery): Promise<EligibleTimeResponse | null> {
     const invoice = await this.loadOwnedRow(id);
     if (!invoice) return null;
     requireDraft(invoice);
+    return this.queryEligibleTime(invoice.clientId, invoice.currency, input, id);
+  }
+
+  private async queryEligibleTime(
+    clientId: string,
+    currency: string,
+    input: EligibleTimeQuery,
+    invoiceId: string | null,
+  ): Promise<EligibleTimeResponse> {
     const reserved = this.reservedTimeExists();
     const rows = await this.db
       .select({ entry: timeEntries, projectName: projects.name, taskName: tasks.name })
@@ -218,9 +289,9 @@ export class InvoiceService implements InvoiceServiceContract {
       .leftJoin(tasks, eq(timeEntries.taskId, tasks.id))
       .where(and(
         eq(timeEntries.userId, this.ownerId),
-        eq(timeEntries.clientId, invoice.clientId),
+        eq(timeEntries.clientId, clientId),
         eq(timeEntries.billable, true),
-        eq(timeEntries.currency, invoice.currency),
+        eq(timeEntries.currency, currency),
         isNotNull(timeEntries.durationSeconds),
         isNotNull(timeEntries.hourlyRate),
         gte(timeEntries.workDate, input.from),
@@ -230,12 +301,12 @@ export class InvoiceService implements InvoiceServiceContract {
       .orderBy(asc(timeEntries.workDate), asc(timeEntries.createdAt), asc(timeEntries.id));
     const entries = rows.map(({ entry, projectName, taskName }) => sourceDto(entry, projectName, taskName));
     return {
-      invoiceId: id,
-      currency: invoice.currency,
+      invoiceId,
+      currency,
       entries,
       count: entries.length,
       totalDurationSeconds: entries.reduce((sum, entry) => sum + entry.durationSeconds, 0),
-      totalAmount: sumMoney(entries.map((entry) => entry.amount), invoice.currency),
+      totalAmount: sumMoney(entries.map((entry) => entry.amount), currency),
     };
   }
 
@@ -244,58 +315,7 @@ export class InvoiceService implements InvoiceServiceContract {
       const invoice = await this.lockOwnedInvoice(tx, id);
       if (!invoice) return false;
       requireDraft(invoice);
-      const ids = [...input.timeEntryIds].sort();
-      const lockedRows = await tx
-        .select({ id: timeEntries.id })
-        .from(timeEntries)
-        .where(and(eq(timeEntries.userId, this.ownerId), inArray(timeEntries.id, ids)))
-        .orderBy(asc(timeEntries.id))
-        .for("update");
-      if (lockedRows.length !== ids.length) throw invoiceValidation("timeEntryIds", "One or more Time Entries are unavailable.");
-      const rows = await tx
-        .select({ entry: timeEntries, projectName: projects.name, taskName: tasks.name })
-        .from(timeEntries)
-        .innerJoin(projects, eq(timeEntries.projectId, projects.id))
-        .leftJoin(tasks, eq(timeEntries.taskId, tasks.id))
-        .where(and(eq(timeEntries.userId, this.ownerId), inArray(timeEntries.id, ids)))
-        .orderBy(asc(timeEntries.id));
-      for (const { entry } of rows) {
-        if (
-          entry.clientId !== invoice.clientId ||
-          !entry.billable ||
-          !entry.durationSeconds ||
-          !entry.hourlyRate ||
-          entry.currency !== invoice.currency ||
-          entry.workDate < input.from ||
-          entry.workDate > input.to
-        ) {
-          throw invoiceValidation("timeEntryIds", "Every selected Time Entry must match this Invoice Client, currency, and billing period.");
-        }
-      }
-      const [existing] = await tx
-        .select({ id: invoiceItemTimeEntries.timeEntryId })
-        .from(invoiceItemTimeEntries)
-        .innerJoin(invoiceItems, eq(invoiceItemTimeEntries.invoiceItemId, invoiceItems.id))
-        .innerJoin(invoices, eq(invoiceItems.invoiceId, invoices.id))
-        .where(and(inArray(invoiceItemTimeEntries.timeEntryId, ids), ne(invoices.status, "void")))
-        .limit(1);
-      if (existing) throw new ApiError(409, "TIME_ENTRY_ALREADY_INVOICED", "One or more Time Entries are already reserved by an Invoice.");
-
-      const groups = groupInvoiceTime(
-        rows.map(({ entry, projectName, taskName }) => ({
-          id: entry.id,
-          description: entry.description,
-          projectId: entry.projectId,
-          projectName,
-          taskId: entry.taskId,
-          taskName,
-          durationSeconds: entry.durationSeconds!,
-          hourlyRate: entry.hourlyRate!,
-          currency: entry.currency!,
-        })),
-        input.grouping,
-        invoice.currency,
-      );
+      const groups = await this.prepareTimeImport(tx, invoice, input);
       const [sort] = await tx
         .select({ value: max(invoiceItems.sortOrder) })
         .from(invoiceItems)
@@ -313,6 +333,68 @@ export class InvoiceService implements InvoiceServiceContract {
       return true;
     });
     return found ? this.loadDtoRequired(id) : null;
+  }
+
+  private async prepareTimeImport(
+    tx: VerilioTransaction,
+    invoice: Pick<InvoiceRow, "clientId" | "currency">,
+    input: ImportTimeInput,
+  ): Promise<ReturnType<typeof groupInvoiceTime>> {
+    const ids = [...input.timeEntryIds].sort();
+    const lockedRows = await tx
+      .select({ id: timeEntries.id })
+      .from(timeEntries)
+      .where(and(eq(timeEntries.userId, this.ownerId), inArray(timeEntries.id, ids)))
+      .orderBy(asc(timeEntries.id))
+      .for("update");
+    if (lockedRows.length !== ids.length) {
+      throw invoiceValidation("timeEntryIds", "One or more Time Entries are unavailable.");
+    }
+    const rows = await tx
+      .select({ entry: timeEntries, projectName: projects.name, taskName: tasks.name })
+      .from(timeEntries)
+      .innerJoin(projects, eq(timeEntries.projectId, projects.id))
+      .leftJoin(tasks, eq(timeEntries.taskId, tasks.id))
+      .where(and(eq(timeEntries.userId, this.ownerId), inArray(timeEntries.id, ids)))
+      .orderBy(asc(timeEntries.id));
+    for (const { entry } of rows) {
+      if (
+        entry.clientId !== invoice.clientId ||
+        !entry.billable ||
+        !entry.durationSeconds ||
+        !entry.hourlyRate ||
+        entry.currency !== invoice.currency ||
+        entry.workDate < input.from ||
+        entry.workDate > input.to
+      ) {
+        throw invoiceValidation("timeEntryIds", "Every selected Time Entry must match this Invoice Client, currency, and billing period.");
+      }
+    }
+    const [existing] = await tx
+      .select({ id: invoiceItemTimeEntries.timeEntryId })
+      .from(invoiceItemTimeEntries)
+      .innerJoin(invoiceItems, eq(invoiceItemTimeEntries.invoiceItemId, invoiceItems.id))
+      .innerJoin(invoices, eq(invoiceItems.invoiceId, invoices.id))
+      .where(and(inArray(invoiceItemTimeEntries.timeEntryId, ids), ne(invoices.status, "void")))
+      .limit(1);
+    if (existing) {
+      throw new ApiError(409, "TIME_ENTRY_ALREADY_INVOICED", "One or more selected Time Entries are no longer available because another Invoice reserved them.");
+    }
+    return groupInvoiceTime(
+      rows.map(({ entry, projectName, taskName }) => ({
+        id: entry.id,
+        description: entry.description,
+        projectId: entry.projectId,
+        projectName,
+        taskId: entry.taskId,
+        taskName,
+        durationSeconds: entry.durationSeconds!,
+        hourlyRate: entry.hourlyRate!,
+        currency: entry.currency!,
+      })),
+      input.grouping,
+      invoice.currency,
+    );
   }
 
   async addManualItem(id: string, input: InvoiceManualItemInput): Promise<InvoiceDto | null> {

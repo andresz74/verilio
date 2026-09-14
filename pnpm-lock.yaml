@@ -81,6 +81,9 @@ importers:
       '@verilio/contracts':
         specifier: workspace:^
         version: link:../../packages/contracts
+      '@verilio/domain':
+        specifier: workspace:^
+        version: link:../../packages/domain
       '@verilio/ui':
         specifier: workspace:^
         version: link:../../packages/ui

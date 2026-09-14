@@ -218,14 +218,6 @@ test("completes the canonical private MVP loop with historical and billing integ
   await page.goto("/invoices/new");
   await page.getByRole("combobox", { name: "Client" }).selectOption({ label: `${clientName} — USD` });
   await expect(page.getByLabel("Invoice currency")).toHaveValue("USD");
-  await page.getByRole("button", { name: "Save Draft" }).click();
-  await expect(page).toHaveURL(/\/invoices\/[0-9a-f-]+$/);
-  const invoiceId = page.url().split("/").at(-1)!;
-  const invoiceHeading = page.getByRole("heading", {
-    level: 1,
-    name: new RegExp(`^${invoicePrefix}`),
-  });
-  const invoiceNumber = (await invoiceHeading.textContent())!;
 
   await page.getByRole("button", { name: "Import Time" }).click();
   dialog = page.getByRole("dialog", { name: "Import eligible Time" });
@@ -236,6 +228,9 @@ test("completes the canonical private MVP loop with historical and billing integ
   await dialog.getByRole("button", { name: "Select all" }).click();
   await dialog.getByRole("button", { name: "Import 2 selected" }).click();
   await expect(dialog).not.toBeVisible();
+  await expect(page).toHaveURL(/\/invoices\/new$/);
+  await expect(page.getByRole("heading", { name: "New Invoice" })).toBeVisible();
+  await expect(page.getByText(/staged locally and will be reserved only after Save Draft succeeds/)).toBeVisible();
   await expect(page.getByText("View 1 source entry")).toHaveCount(2);
 
   await page.getByRole("button", { name: "Add manual Item" }).click();
@@ -250,6 +245,13 @@ test("completes the canonical private MVP loop with historical and billing integ
   await page.getByLabel("Discount percent").fill("10");
   await page.getByLabel("Tax percent").fill("6");
   await page.getByRole("button", { name: "Save Draft" }).click();
+  await expect(page).toHaveURL(/\/invoices\/[0-9a-f-]+$/);
+  const invoiceId = page.url().split("/").at(-1)!;
+  const invoiceHeading = page.getByRole("heading", {
+    level: 1,
+    name: new RegExp(`^${invoicePrefix}`),
+  });
+  const invoiceNumber = (await invoiceHeading.textContent())!;
   await expect(page.getByRole("button", { name: "Saved Draft" })).toBeVisible();
 
   const savedInvoice = await getJson<{ invoice: {
