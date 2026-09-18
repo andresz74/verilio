@@ -199,13 +199,20 @@ tar -xzf verilio-<version>-release.tar.gz
 
 ## 7. Initial deployment and updates
 
-Set `VERILIO_VERSION` in `/etc/verilio/verilio.env` to the exact transferred tag. From the extracted
-release:
+Replace `<version>` with the exact transferred tag. After verifying the extracted release, switch
+`current`, synchronize `VERILIO_VERSION`, and verify it before deployment:
 
 ```sh
-sudo VERILIO_ENV_FILE=/etc/verilio/verilio.env ./deploy/server-deploy.sh
-sudo ln -sfn /opt/verilio/releases/verilio-<version> /opt/verilio/current
+VERSION='<version>'
+sudo ln -sfn "/opt/verilio/releases/verilio-$VERSION" /opt/verilio/current
+sudo sed -i "s/^VERILIO_VERSION=.*/VERILIO_VERSION=$VERSION/" /etc/verilio/verilio.env
+sudo grep '^VERILIO_VERSION=' /etc/verilio/verilio.env
+sudo VERILIO_ENV_FILE=/etc/verilio/verilio.env /opt/verilio/current/deploy/server-deploy.sh
 ```
+
+`server-deploy.sh` uses `VERILIO_VERSION` to select both the image archive and image tags.
+Switching `/opt/verilio/current` alone does not update the env file; its version must match the
+release being deployed.
 
 The deployment script verifies every release checksum, loads the image archive with `docker load`,
 creates a pre-deployment backup when an existing PostgreSQL service is running, applies migrations,
@@ -216,13 +223,23 @@ For an update:
 
 1. Verify the latest daily and off-host backup.
 2. Transfer and verify the new release.
-3. Set the explicit new `VERILIO_VERSION`.
-4. Run `server-deploy.sh` from the new release.
-5. Verify the UI, current Timer state, Reports, an Invoice, and PDF generation.
-6. Move `/opt/verilio/current` only after acceptance.
+3. Switch `/opt/verilio/current` to the new release.
+4. Update `/etc/verilio/verilio.env` to the matching `VERILIO_VERSION` and verify it.
+5. Run `server-deploy.sh` from `/opt/verilio/current`.
+6. Verify the UI, current Timer state, Reports, an Invoice, and PDF generation.
 7. Retain the previous release and pre-deployment backup through the rollback window.
 
 Use a short maintenance window for migrations. Do not run source builds on the NC110.
+
+If deployment reports a missing archive for a previous release, compare:
+
+```sh
+readlink -f /opt/verilio/current
+grep '^VERILIO_VERSION=' /etc/verilio/verilio.env
+cat /opt/verilio/current/release-manifest.txt
+```
+
+The symlink, env value, and manifest must identify the same release version.
 
 ## 8. Tailscale Serve
 
@@ -330,8 +347,9 @@ exceptional recovery; do not blindly execute it over an initialized cluster.
 
 Every future release must classify its database change.
 
-**Compatible/additive migration:** set `VERILIO_VERSION` to the previous loaded image tag, start the
-previous release, keep the forward migration, and run health/application smoke checks.
+**Compatible/additive migration:** point `/opt/verilio/current` back to the previous release, set
+`VERILIO_VERSION` to its loaded image tag, start that release, keep the forward migration, and run
+health/application smoke checks.
 
 **Incompatible or data-changing migration:** stop the application, preserve the upgraded volume,
 create a fresh volume, restore the pre-deployment backup, load/select the previous images, and run
