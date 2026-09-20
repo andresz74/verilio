@@ -1640,6 +1640,13 @@ Do not rely on a single `invoiceId` column on `time_entries` as the only relatio
 
 Invoice state for a time entry can be derived through these links.
 
+Distinguish active non-Void links from any historical link. A non-Void link blocks ordinary Time
+Entry editing and deletion. A Time Entry with only Void links is released for editing and
+re-invoicing, but any historical link blocks hard deletion. Keep the restrictive Time Entry
+foreign key; reject historical deletion with a stable domain conflict before issuing DELETE.
+The saved Invoice Item, totals, and PDF remain the historical billing record. Live source-Time
+details on a Void Invoice may change after correction; no source-Time snapshot is added here.
+
 For performance, report queries may join/aggregate this relationship efficiently or use a safe derived view.
 
 ---
@@ -2597,7 +2604,8 @@ archive
 Time entries:
 
 ```text
-hard delete only when not invoice-protected
+hard delete only when never linked to any Invoice
+Void-only history permits edit and re-invoicing, not deletion
 ```
 
 Invoices:

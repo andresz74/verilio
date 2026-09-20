@@ -551,7 +551,9 @@ On Save:
 - Timesheet.
 - Detailed Report, if editing is exposed there.
 
-## Uninvoiced Entry
+## Not Actively Invoiced Entry
+
+This includes Time linked only to Void Invoice history.
 
 Editable:
 
@@ -600,7 +602,7 @@ A future invoice-aware correction workflow can be designed later.
 
 # 10. Delete Time Entry Flow
 
-## Uninvoiced Entry
+## Never-Invoiced Entry
 
 ```text
 Delete
@@ -621,6 +623,11 @@ Delete 2h 15m — “Fix login validation”?
 Delete is blocked.
 
 Offer **View invoice**.
+
+## Void-Only Invoice History
+
+The source Time is Not invoiced and may be edited or billed again. Do not offer Delete: the
+historical Invoice link must remain. Explain that the entry is kept for Invoice history.
 
 ---
 

@@ -12,9 +12,6 @@ import type { VerilioDatabase, VerilioTransaction } from "@verilio/db";
 import {
   businessProfiles,
   clients,
-  invoiceItems,
-  invoiceItemTimeEntries,
-  invoices,
   projects,
   tasks,
   timeEntries,
@@ -26,10 +23,11 @@ import {
   resolveRange,
   workDateFromInstant,
 } from "@verilio/domain";
-import { and, count, desc, eq, gte, ilike, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, ilike, isNotNull, isNull, lte, sql } from "drizzle-orm";
 
 import { ApiError } from "./errors.js";
 import { LOCAL_USER_ID } from "./settings-service.js";
+import { loadTimeEntryInvoiceReferences } from "./time-entry-invoice-references.js";
 
 type TimeEntryRow = typeof timeEntries.$inferSelect;
 type TimeContext = {
@@ -216,10 +214,10 @@ export class TimeEntryService implements TimeEntryServiceContract {
     ]);
     const total = totalRows[0]?.value ?? 0;
 
-    const invoiceReferences = await this.loadInvoiceReferences(rows.map(({ entry }) => entry.id));
+    const invoiceReferences = await loadTimeEntryInvoiceReferences(this.db, this.ownerId, rows.map(({ entry }) => entry.id));
     return {
       entries: rows.map((row) =>
-        toDto(row.entry, row.clientName, row.projectName, row.taskName, invoiceReferences.get(row.entry.id) ?? null),
+        toDto(row.entry, row.clientName, row.projectName, row.taskName, invoiceReferences.active.get(row.entry.id) ?? null, invoiceReferences.historical.has(row.entry.id)),
       ),
       dailyTotals,
       totalDurationSeconds: dailyTotals.reduce(
@@ -269,7 +267,7 @@ export class TimeEntryService implements TimeEntryServiceContract {
     const updatedId = await this.db.transaction(async (tx) => {
       const existing = await this.loadOwnedRowForUpdate(tx, id);
       if (!existing) return null;
-      if ((await this.loadInvoiceReferences([id], tx)).has(id)) {
+      if ((await loadTimeEntryInvoiceReferences(tx, this.ownerId, [id])).active.has(id)) {
         throw new ApiError(409, "TIME_ENTRY_INVOICED", "Remove this Time Entry from its Invoice before editing it.");
       }
       if (!existing.durationSeconds || !existing.endAt && existing.mode === "timer") {
@@ -323,8 +321,12 @@ export class TimeEntryService implements TimeEntryServiceContract {
     return this.db.transaction(async (tx) => {
       const existing = await this.loadOwnedRowForUpdate(tx, id);
       if (!existing) return false;
-      if ((await this.loadInvoiceReferences([id], tx)).has(id)) {
+      const references = await loadTimeEntryInvoiceReferences(tx, this.ownerId, [id]);
+      if (references.active.has(id)) {
         throw new ApiError(409, "TIME_ENTRY_INVOICED", "Remove this Time Entry from its Invoice before deleting it.");
+      }
+      if (references.historical.has(id)) {
+        throw new ApiError(409, "TIME_ENTRY_HAS_INVOICE_HISTORY", "This Time Entry is part of Invoice history and cannot be deleted.");
       }
       if (!existing.durationSeconds) {
         throw new ApiError(409, "TIME_ENTRY_NOT_EDITABLE", "A running timer cannot be deleted.");
@@ -454,27 +456,8 @@ export class TimeEntryService implements TimeEntryServiceContract {
       .where(and(eq(timeEntries.id, id), eq(timeEntries.userId, this.ownerId)))
       .limit(1);
     if (!row) return null;
-    const invoice = (await this.loadInvoiceReferences([id])).get(id) ?? null;
-    return toDto(row.entry, row.clientName, row.projectName, row.taskName, invoice);
-  }
-
-  private async loadInvoiceReferences(ids: string[], db: VerilioDatabase | VerilioTransaction = this.db): Promise<Map<string, { id: string; invoiceNumber: string }>> {
-    if (!ids.length) return new Map();
-    const rows = await db
-      .select({
-        timeEntryId: invoiceItemTimeEntries.timeEntryId,
-        id: invoices.id,
-        invoiceNumber: invoices.invoiceNumber,
-      })
-      .from(invoiceItemTimeEntries)
-      .innerJoin(invoiceItems, eq(invoiceItemTimeEntries.invoiceItemId, invoiceItems.id))
-      .innerJoin(invoices, eq(invoiceItems.invoiceId, invoices.id))
-      .where(and(
-        inArray(invoiceItemTimeEntries.timeEntryId, ids),
-        eq(invoices.userId, this.ownerId),
-        ne(invoices.status, "void"),
-      ));
-    return new Map(rows.map((row) => [row.timeEntryId, { id: row.id, invoiceNumber: row.invoiceNumber }]));
+    const references = await loadTimeEntryInvoiceReferences(this.db, this.ownerId, [id]);
+    return toDto(row.entry, row.clientName, row.projectName, row.taskName, references.active.get(id) ?? null, references.historical.has(id));
   }
 }
 
@@ -484,6 +467,7 @@ function toDto(
   projectName: string,
   taskName: string | null,
   invoice: { id: string; invoiceNumber: string } | null,
+  hasInvoiceHistory: boolean,
 ): TimeEntryDto {
   return {
     id: row.id,
@@ -503,6 +487,7 @@ function toDto(
     hourlyRate: row.hourlyRate,
     currency: row.currency,
     invoice,
+    hasInvoiceHistory,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

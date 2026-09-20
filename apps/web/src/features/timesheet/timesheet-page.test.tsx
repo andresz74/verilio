@@ -33,6 +33,7 @@ const rangeEntry: TimeEntryDto = {
   hourlyRate: "100.0000",
   currency: "USD",
   invoice: null,
+  hasInvoiceHistory: false,
   createdAt: "2026-09-06T05:00:00.000Z",
   updatedAt: "2026-09-06T05:00:00.000Z",
 };
@@ -121,12 +122,22 @@ describe("TimesheetPage", () => {
 
   it("shows Draft-reserved Time with navigation to its Invoice and no edit actions", async () => {
     baseHandlers();
-    server.use(http.get("/api/v1/time-entries", () => HttpResponse.json(response([{ ...rangeEntry, invoice: { id: "66666666-6666-4666-8666-666666666666", invoiceNumber: "INV-7" } }]))));
+    server.use(http.get("/api/v1/time-entries", () => HttpResponse.json(response([{ ...rangeEntry, invoice: { id: "66666666-6666-4666-8666-666666666666", invoiceNumber: "INV-7" }, hasInvoiceHistory: true }]))));
     renderPage();
     const link = await screen.findByRole("link", { name: "View INV-7" });
     expect(link).toHaveAttribute("href", "/invoices/66666666-6666-4666-8666-666666666666");
     expect(screen.getByText("Invoiced")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Edit" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Void-history Time editable and Not invoiced without offering Delete", async () => {
+    baseHandlers();
+    server.use(http.get("/api/v1/time-entries", () => HttpResponse.json(response([{ ...rangeEntry, hasInvoiceHistory: true }]))));
+    renderPage();
+    expect(await screen.findByText("Kept for Invoice history")).toBeVisible();
+    expect(screen.getByText("Not invoiced")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Edit" })).toBeVisible();
     expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
   });
 

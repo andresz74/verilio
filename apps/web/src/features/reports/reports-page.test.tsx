@@ -65,6 +65,7 @@ const detailedEntry = {
   hourlyRate: "85.0000",
   currency: "USD",
   invoice: null,
+  hasInvoiceHistory: false,
   amount: "170.00",
   invoiceStatus: "not-invoiced" as const,
   createdAt: "2026-09-05T12:00:00.000Z",

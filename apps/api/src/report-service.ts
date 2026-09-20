@@ -17,7 +17,6 @@ import {
   eq,
   gte,
   exists,
-  inArray,
   isNotNull,
   lte,
   ne,
@@ -27,6 +26,7 @@ import {
 
 import { ApiError } from "./errors.js";
 import { LOCAL_USER_ID } from "./settings-service.js";
+import { loadTimeEntryInvoiceReferences } from "./time-entry-invoice-references.js";
 
 type SharedReportFilters = Pick<
   ReportSummaryQuery,
@@ -196,11 +196,11 @@ export class ReportService implements ReportServiceContract {
     ]);
     const total = totalRows[0]?.value ?? 0;
 
-    const invoiceReferences = await this.loadInvoiceReferences(rows.map(({ entry }) => entry.id));
+    const invoiceReferences = await loadTimeEntryInvoiceReferences(this.db, this.ownerId, rows.map(({ entry }) => entry.id));
     return {
       range: { from: input.from, to: input.to },
       entries: rows.map(({ entry, clientName, projectName, taskName }): ReportDetailedRow => {
-        const invoice = invoiceReferences.get(entry.id) ?? null;
+        const invoice = invoiceReferences.active.get(entry.id) ?? null;
         return {
           id: entry.id,
           clientId: entry.clientId,
@@ -225,6 +225,7 @@ export class ReportService implements ReportServiceContract {
             hourlyRate: entry.hourlyRate,
           }),
           invoice,
+          hasInvoiceHistory: invoiceReferences.historical.has(entry.id),
           invoiceStatus: invoice ? "invoiced" : "not-invoiced",
           createdAt: entry.createdAt.toISOString(),
           updatedAt: entry.updatedAt.toISOString(),
@@ -272,17 +273,6 @@ export class ReportService implements ReportServiceContract {
           ne(invoices.status, "void"),
         )),
     );
-  }
-
-  private async loadInvoiceReferences(ids: string[]): Promise<Map<string, { id: string; invoiceNumber: string }>> {
-    if (!ids.length) return new Map();
-    const rows = await this.db
-      .select({ timeEntryId: invoiceItemTimeEntries.timeEntryId, id: invoices.id, invoiceNumber: invoices.invoiceNumber })
-      .from(invoiceItemTimeEntries)
-      .innerJoin(invoiceItems, eq(invoiceItemTimeEntries.invoiceItemId, invoiceItems.id))
-      .innerJoin(invoices, eq(invoiceItems.invoiceId, invoices.id))
-      .where(and(inArray(invoiceItemTimeEntries.timeEntryId, ids), eq(invoices.userId, this.ownerId), ne(invoices.status, "void")));
-    return new Map(rows.map((row) => [row.timeEntryId, { id: row.id, invoiceNumber: row.invoiceNumber }]));
   }
 
   private async validateHierarchy(input: SharedReportFilters): Promise<void> {

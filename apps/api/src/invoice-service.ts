@@ -617,7 +617,7 @@ export class InvoiceService implements InvoiceServiceContract {
       unitPrice: item.unitPrice,
       amount: item.amount,
       sortOrder: item.sortOrder,
-      sources: rows.map(({ entry, projectName, taskName }) => sourceDto(entry, projectName, taskName)),
+      sources: rows.map(({ entry, projectName, taskName }) => linkedSourceDto(entry, projectName, taskName)),
       createdAt: item.createdAt.toISOString(),
       updatedAt: item.updatedAt.toISOString(),
     };
@@ -625,7 +625,13 @@ export class InvoiceService implements InvoiceServiceContract {
 }
 
 function sourceDto(entry: typeof timeEntries.$inferSelect, projectName: string, taskName: string | null) {
-  if (!entry.durationSeconds || !entry.hourlyRate || !entry.currency) throw new Error("Imported billable Time Entry is missing historical billing data");
+  const source = linkedSourceDto(entry, projectName, taskName);
+  if (!source.hourlyRate || !source.currency || !source.amount) throw new Error("Imported billable Time Entry is missing historical billing data");
+  return { ...source, hourlyRate: source.hourlyRate, currency: source.currency, amount: source.amount };
+}
+
+function linkedSourceDto(entry: typeof timeEntries.$inferSelect, projectName: string, taskName: string | null) {
+  if (!entry.durationSeconds) throw new Error("Linked source Time Entry is missing its completed duration");
   return {
     id: entry.id,
     workDate: entry.workDate,
@@ -637,7 +643,9 @@ function sourceDto(entry: typeof timeEntries.$inferSelect, projectName: string, 
     durationSeconds: entry.durationSeconds,
     hourlyRate: entry.hourlyRate,
     currency: entry.currency,
-    amount: calculateHistoricalTimeAmount({ billable: true, currency: entry.currency, durationSeconds: entry.durationSeconds, hourlyRate: entry.hourlyRate })!,
+    amount: entry.billable && entry.hourlyRate && entry.currency && entry.durationSeconds
+      ? calculateHistoricalTimeAmount({ billable: true, currency: entry.currency, durationSeconds: entry.durationSeconds, hourlyRate: entry.hourlyRate })
+      : null,
   };
 }
 

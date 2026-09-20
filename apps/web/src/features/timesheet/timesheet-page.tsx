@@ -310,7 +310,7 @@ function TimeEntryRow({ entry, onDelete, onEdit, timezone }: { entry: TimeEntryD
         {entry.invoice ? (
           <Link className="inline-flex min-h-8 items-center rounded-[var(--radius-md)] px-3 text-sm font-semibold text-[var(--color-accent-active)] underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-border-focus)]" to={`/invoices/${entry.invoice.id}`}>View {entry.invoice.invoiceNumber}</Link>
         ) : (
-          <><Button size="sm" variant="secondary" onClick={() => onEdit(entry)}>Edit</Button><Button size="sm" variant="quiet" onClick={() => onDelete(entry)}>Delete</Button></>
+          <><Button size="sm" variant="secondary" onClick={() => onEdit(entry)}>Edit</Button>{entry.hasInvoiceHistory ? <span className="self-center text-xs text-[var(--color-text-muted)]">Kept for Invoice history</span> : <Button size="sm" variant="quiet" onClick={() => onDelete(entry)}>Delete</Button>}</>
         )}
       </div>
     </article>

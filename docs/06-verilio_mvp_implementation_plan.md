@@ -833,9 +833,9 @@ Changing Client/Project preserves the historical rate unless the user explicitly
 
 ## M4.14 — Delete Entry
 
-Uninvoiced entries may be deleted with confirmation.
-
-Invoice-protected entries are rejected once invoice relationships exist.
+Completed entries never linked to an Invoice may be deleted with confirmation. A non-Void Invoice link
+blocks editing and deletion. A Void-only link releases Time for correction and re-invoicing, but
+historical Invoice links are retained and still block hard deletion with a domain conflict.
 
 ## M4 Exit Gate
 
@@ -1341,6 +1341,9 @@ Result:
 - History retained.
 - Number retained.
 - Source time released.
+- Source Time may be edited and re-invoiced, but not hard-deleted: historical Invoice Item/Time
+  links remain. Saved Invoice Items, totals, and PDF are the historical billing record; live
+  source details may change after Void without adding source-Time snapshots.
 
 ## M8.8 — Derived Overdue
 
