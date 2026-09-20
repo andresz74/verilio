@@ -23,6 +23,13 @@ import { TimeEntryService } from "../src/time-entry-service.js";
 
 const databaseUrl = process.env.DATABASE_URL ?? "postgresql://verilio:verilio@localhost:5432/verilio";
 const { db, pool } = createDatabaseClient(databaseUrl);
+function taggedDatabaseUrl(applicationName: string) {
+  const url = new URL(databaseUrl);
+  url.searchParams.set("application_name", applicationName);
+  return url.toString();
+}
+const mutationClient = createDatabaseClient(taggedDatabaseUrl("r1-time-mutation"));
+const importClient = createDatabaseClient(taggedDatabaseUrl("r1-invoice-import"));
 const OWNER_A = "00000000-0000-4000-8000-000000000011";
 const OWNER_B = "00000000-0000-4000-8000-000000000012";
 
@@ -96,7 +103,69 @@ async function setupOwner(ownerId: string) {
 
 beforeEach(removeOwners);
 afterEach(removeOwners);
-afterAll(async () => pool.end());
+afterAll(async () => {
+  await Promise.all([pool.end(), mutationClient.pool.end(), importClient.pool.end()]);
+});
+
+async function holdTimeEntryLock(id: string) {
+  let releaseLock!: () => void;
+  let markLocked!: () => void;
+  let released = false;
+  const releaseSignal = new Promise<void>((resolve) => { releaseLock = resolve; });
+  const lockedSignal = new Promise<void>((resolve) => { markLocked = resolve; });
+  const holder = db.transaction(async (tx) => {
+    await tx.select({ id: timeEntries.id }).from(timeEntries).where(eq(timeEntries.id, id)).for("update");
+    markLocked();
+    await releaseSignal;
+  });
+  await lockedSignal;
+  return async () => {
+    if (!released) {
+      released = true;
+      releaseLock();
+    }
+    await holder;
+  };
+}
+
+async function waitForTimeEntryLockWaiter(applicationName: string) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const { rows } = await pool.query<{ waiting: boolean }>(
+      `select exists (
+        select 1 from pg_stat_activity
+        where application_name = $1
+          and wait_event_type = 'Lock'
+          and query ilike '%time_entries%'
+      ) as waiting`,
+      [applicationName],
+    );
+    if (rows[0]?.waiting) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`${applicationName} did not wait for the Time Entry row lock`);
+}
+
+async function setupTimeEntryImportRace() {
+  const { client, project, task } = await setupOwner(OWNER_A);
+  const timeService = new TimeEntryService(mutationClient.db, OWNER_A);
+  const entry = await timeService.create({
+    mode: "duration", workDate: "2026-09-05", durationSeconds: 3_600,
+    clientId: client.id, projectId: project.id, taskId: task.id,
+    description: "Original source", billable: true,
+  });
+  const invoiceService = new InvoiceService(importClient.db, OWNER_A);
+  const invoice = await invoiceService.create(draftInput(client.id));
+  const importInput = {
+    from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entry.id], grouping: "individual" as const,
+  };
+  const editInput = {
+    mode: "duration" as const, workDate: entry.workDate, durationSeconds: 7_200,
+    clientId: client.id, projectId: project.id, taskId: task.id,
+    description: "Edited source", billable: true,
+  };
+  return { entry, invoice, timeService, invoiceService, importInput, editInput };
+}
 
 describe("M7 Invoice Draft persistence", () => {
   it("allocates distinct stable numbers under concurrent first saves and isolates owners", async () => {
@@ -263,6 +332,85 @@ describe("M7 eligible Time, reservation, grouping, and release", () => {
     const individually = await service.importTime(invoice.id, { ...command, grouping: "individual" });
     expect(individually?.items.map((item) => item.description).sort()).toEqual(["General work", "Task work"]);
     expect(individually?.items.every((item) => item.sources.length === 1)).toBe(true);
+  });
+});
+
+describe("R1 Time Entry mutation versus Invoice reservation", () => {
+  it("rejects an edit after the Invoice import wins the Time Entry lock", async () => {
+    const fixture = await setupTimeEntryImportRace();
+    const release = await holdTimeEntryLock(fixture.entry.id);
+    try {
+      const imported = fixture.invoiceService.importTime(fixture.invoice.id, fixture.importInput);
+      await waitForTimeEntryLockWaiter("r1-invoice-import");
+      const edited = Promise.allSettled([fixture.timeService.update(fixture.entry.id, fixture.editInput)]);
+      await waitForTimeEntryLockWaiter("r1-time-mutation");
+      await release();
+
+      expect((await imported)?.items[0]?.sources.map(({ id }) => id)).toEqual([fixture.entry.id]);
+      expect((await edited)[0]).toMatchObject({ status: "rejected", reason: { code: "TIME_ENTRY_INVOICED", statusCode: 409 } });
+      expect(await fixture.timeService.get(fixture.entry.id)).toMatchObject({ description: "Original source", durationSeconds: 3_600 });
+      expect(await db.select().from(invoiceItemTimeEntries).where(eq(invoiceItemTimeEntries.timeEntryId, fixture.entry.id))).toHaveLength(1);
+    } finally {
+      await release();
+    }
+  });
+
+  it("imports the updated source values after an edit wins the Time Entry lock", async () => {
+    const fixture = await setupTimeEntryImportRace();
+    const release = await holdTimeEntryLock(fixture.entry.id);
+    try {
+      const edited = fixture.timeService.update(fixture.entry.id, fixture.editInput);
+      await waitForTimeEntryLockWaiter("r1-time-mutation");
+      const imported = fixture.invoiceService.importTime(fixture.invoice.id, fixture.importInput);
+      await waitForTimeEntryLockWaiter("r1-invoice-import");
+      await release();
+
+      expect(await edited).toMatchObject({ description: "Edited source", durationSeconds: 7_200 });
+      expect(await imported).toMatchObject({ subtotal: "170.00", items: [{ description: "Edited source", quantity: "2.000000000000", unitPrice: "85.0000" }] });
+      expect((await fixture.timeService.get(fixture.entry.id))?.invoice?.id).toBe(fixture.invoice.id);
+      expect(await db.select().from(invoiceItemTimeEntries).where(eq(invoiceItemTimeEntries.timeEntryId, fixture.entry.id))).toHaveLength(1);
+    } finally {
+      await release();
+    }
+  });
+
+  it("rejects deletion after the Invoice import wins the Time Entry lock", async () => {
+    const fixture = await setupTimeEntryImportRace();
+    const release = await holdTimeEntryLock(fixture.entry.id);
+    try {
+      const imported = fixture.invoiceService.importTime(fixture.invoice.id, fixture.importInput);
+      await waitForTimeEntryLockWaiter("r1-invoice-import");
+      const deleted = Promise.allSettled([fixture.timeService.delete(fixture.entry.id)]);
+      await waitForTimeEntryLockWaiter("r1-time-mutation");
+      await release();
+
+      expect((await imported)?.items).toHaveLength(1);
+      expect((await deleted)[0]).toMatchObject({ status: "rejected", reason: { code: "TIME_ENTRY_INVOICED", statusCode: 409 } });
+      expect(await fixture.timeService.get(fixture.entry.id)).toMatchObject({ description: "Original source", durationSeconds: 3_600 });
+      expect(await db.select().from(invoiceItemTimeEntries).where(eq(invoiceItemTimeEntries.timeEntryId, fixture.entry.id))).toHaveLength(1);
+    } finally {
+      await release();
+    }
+  });
+
+  it("returns an eligibility error without orphan links after deletion wins the Time Entry lock", async () => {
+    const fixture = await setupTimeEntryImportRace();
+    const release = await holdTimeEntryLock(fixture.entry.id);
+    try {
+      const deleted = fixture.timeService.delete(fixture.entry.id);
+      await waitForTimeEntryLockWaiter("r1-time-mutation");
+      const imported = Promise.allSettled([fixture.invoiceService.importTime(fixture.invoice.id, fixture.importInput)]);
+      await waitForTimeEntryLockWaiter("r1-invoice-import");
+      await release();
+
+      expect(await deleted).toBe(true);
+      expect((await imported)[0]).toMatchObject({ status: "rejected", reason: { code: "VALIDATION_ERROR", statusCode: 400 } });
+      expect(await fixture.timeService.get(fixture.entry.id)).toBeNull();
+      expect(await db.select().from(invoiceItems).where(eq(invoiceItems.invoiceId, fixture.invoice.id))).toHaveLength(0);
+      expect(await db.select().from(invoiceItemTimeEntries).where(eq(invoiceItemTimeEntries.timeEntryId, fixture.entry.id))).toHaveLength(0);
+    } finally {
+      await release();
+    }
   });
 });
 
