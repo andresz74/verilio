@@ -22,6 +22,12 @@ import {
   stopTimer,
   timerKeys,
 } from "../features/timer/time-entry-api.js";
+import {
+  isUnconfirmedTimerFeedback,
+  reconcileCurrentTimer,
+  TIMER_STATE_CHECKING_MESSAGE,
+  TIMER_STATE_UNKNOWN_MESSAGE,
+} from "../features/timer/timer-recovery.js";
 
 type NavigationItem = {
   icon: LucideIcon;
@@ -94,14 +100,43 @@ function IdleTimerIndicator() {
 
 function RunningTimerIndicator({ onNavigate }: { onNavigate?: (() => void) | undefined }) {
   const queryClient = useQueryClient();
+  const [stopFeedback, setStopFeedback] = useState<{ message: string; timerId?: string } | null>(null);
   const currentQuery = useQuery({ queryKey: timerKeys.current, queryFn: getCurrentTimer });
+  const retryStatusCheck = async () => {
+    const result = await currentQuery.refetch();
+    if (result.isSuccess) {
+      setStopFeedback((feedback) => feedback && isUnconfirmedTimerFeedback(feedback.message) ? null : feedback);
+    }
+  };
   const stopMutation = useMutation({
     mutationFn: stopTimer,
+    onMutate: () => setStopFeedback(null),
     onSuccess: (response) => {
       queryClient.setQueryData(timerKeys.current, { timer: null, serverNow: response.serverNow });
       void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
     },
+    onError: async () => {
+      setStopFeedback({ message: TIMER_STATE_CHECKING_MESSAGE });
+      const previousId = currentQuery.data?.timer?.id;
+      const result = await reconcileCurrentTimer(queryClient);
+      if (result.status === "unknown") {
+        setStopFeedback({ message: TIMER_STATE_UNKNOWN_MESSAGE });
+      } else {
+        void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
+        if (result.state.timer) {
+          setStopFeedback({ message: result.state.timer.id === previousId ? "Timer is still running." : "A Timer is running.", timerId: result.state.timer.id });
+        } else {
+          setStopFeedback(null);
+        }
+      }
+    },
   });
+  if (currentQuery.isFetching || stopFeedback?.message === TIMER_STATE_CHECKING_MESSAGE) {
+    return <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] px-3 py-3"><p role="status" className="m-0 text-sm text-[var(--color-text-secondary)]">{TIMER_STATE_CHECKING_MESSAGE}</p></div>;
+  }
+  if (currentQuery.isError) {
+    return <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] px-3 py-3"><InlineError>{TIMER_STATE_UNKNOWN_MESSAGE}</InlineError><Button size="sm" variant="secondary" className="mt-2" onClick={() => void retryStatusCheck()}>Retry status check</Button></div>;
+  }
   const timer = currentQuery.data?.timer;
   if (!timer || !currentQuery.data) {
     return <IdleTimerIndicator />;
@@ -114,7 +149,7 @@ function RunningTimerIndicator({ onNavigate }: { onNavigate?: (() => void) | und
         <span className="text-sm font-semibold tabular-nums"><ElapsedTime startAt={timer.startAt ?? currentQuery.data.serverNow} serverNow={currentQuery.data.serverNow} /></span>
         <Button size="sm" variant="secondary" disabled={stopMutation.isPending} onClick={() => stopMutation.mutate()}>Stop</Button>
       </div>
-      {stopMutation.isError ? <div className="mt-2"><InlineError>Stop failed. Timer is still running.</InlineError></div> : null}
+      {stopFeedback && (stopFeedback.timerId === undefined || stopFeedback.timerId === timer.id) ? <div className="mt-2"><InlineError>{stopFeedback.message}</InlineError></div> : null}
     </div>
   );
 }
@@ -172,6 +207,12 @@ function MobileRunningTimerIndicator() {
   });
   const timer = currentQuery.data?.timer;
 
+  if (currentQuery.isFetching) {
+    return <span role="status" className="mx-3 text-xs font-semibold text-[var(--color-text-secondary)]">Checking Timer state…</span>;
+  }
+  if (currentQuery.isError) {
+    return <NavLink to="/timer" className="mx-3 text-xs font-semibold text-[var(--color-danger-default)] underline">Timer state unconfirmed</NavLink>;
+  }
   if (!timer || !currentQuery.data) return null;
 
   return (

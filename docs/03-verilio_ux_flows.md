@@ -1805,29 +1805,20 @@ Never clear the form after a failed save.
 
 # 50.2 Timer Start Failure
 
-Timer state must remain unambiguous.
+If the Start response does not establish whether persistence succeeded, query the current Timer
+before claiming that one is or is not running. Show the server's actual running Timer if present,
+and preserve the Start form because its response was not acknowledged. If the status query also
+fails, say that Timer state could not be confirmed; do not claim that no time is being recorded.
 
-```text
-Timer could not be started.
-No time is currently being recorded.
-
-[ Try again ]
-```
-
-Do not begin a purely visual timer if the authoritative start failed.
+Do not begin a purely visual timer if the authoritative start was not confirmed.
 
 ---
 
 # 50.3 Timer Stop Failure
 
-```text
-Timer could not be stopped.
-It is still recorded as running.
-
-[ Try again ]
-```
-
-This is preferable to falsely showing a stopped timer while persisted state says otherwise.
+If the Stop response is uncertain, query the current Timer. Show Running only when that query
+confirms a running Timer; show idle and refresh recent time when it confirms none. If the query
+also fails, show an unconfirmed state rather than presenting stale Running or idle state as fact.
 
 ---
 

@@ -13,7 +13,7 @@ import {
 } from "@verilio/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock3, Plus, Square } from "lucide-react";
-import { useState } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { Link } from "react-router-dom";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
@@ -34,6 +34,12 @@ import {
 } from "./time-entry-api.js";
 import { TimeEntryFormDialog } from "./time-entry-form-dialog.js";
 import { formatDuration, formatHourlyRate, hierarchyLabel } from "./time-format.js";
+import {
+  isUnconfirmedTimerFeedback,
+  reconcileCurrentTimer,
+  TIMER_STATE_CHECKING_MESSAGE,
+  TIMER_STATE_UNKNOWN_MESSAGE,
+} from "./timer-recovery.js";
 
 const TimerFormSchema = z.object({
   description: z.string().trim().max(1_000),
@@ -43,6 +49,8 @@ const TimerFormSchema = z.object({
   billable: z.boolean(),
 });
 type TimerFormValues = z.infer<typeof TimerFormSchema>;
+type TimerFeedback = { message: string; timerId?: string | null };
+type StartFeedback = { message: string; running?: boolean };
 
 export function TimerPage() {
   const queryClient = useQueryClient();
@@ -50,47 +58,77 @@ export function TimerPage() {
   const [editing, setEditing] = useState<TimeEntryDto | null>(null);
   const [deleting, setDeleting] = useState<TimeEntryDto | null>(null);
   const [pendingStart, setPendingStart] = useState<TimerStartInput | null>(null);
-  const [replaceError, setReplaceError] = useState<string | null>(null);
+  const [timerFeedback, setTimerFeedback] = useState<TimerFeedback | null>(null);
+  const [startFeedback, setStartFeedback] = useState<StartFeedback | null>(null);
   const currentQuery = useQuery({ queryKey: timerKeys.current, queryFn: getCurrentTimer });
   const recentQuery = useQuery({ queryKey: timerKeys.recent, queryFn: getRecentTimeEntries });
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: getSettings });
+  const retryStatusCheck = async () => {
+    const result = await currentQuery.refetch();
+    if (result.isSuccess) {
+      setTimerFeedback((feedback) => feedback && isUnconfirmedTimerFeedback(feedback.message) ? null : feedback);
+      setStartFeedback((feedback) => feedback && isUnconfirmedTimerFeedback(feedback.message) ? null : feedback);
+    }
+  };
 
   const stopMutation = useMutation({
     mutationFn: stopTimer,
+    onMutate: () => setTimerFeedback(null),
     onSuccess: (response) => {
       queryClient.setQueryData(timerKeys.current, { timer: null, serverNow: response.serverNow });
       void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
+    },
+    onError: async () => {
+      setTimerFeedback({ message: TIMER_STATE_CHECKING_MESSAGE });
+      const previousId = currentQuery.data?.timer?.id;
+      const result = await reconcileCurrentTimer(queryClient);
+      if (result.status === "unknown") {
+        setTimerFeedback({ message: TIMER_STATE_UNKNOWN_MESSAGE });
+      } else {
+        void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
+        if (result.state.timer) {
+          setTimerFeedback({ message: result.state.timer.id === previousId ? "Timer is still running." : "A Timer is running.", timerId: result.state.timer.id });
+        } else {
+          setTimerFeedback({ message: "Timer state refreshed. No Timer is currently running.", timerId: null });
+        }
+      }
     },
   });
 
   const replaceMutation = useMutation({
     mutationFn: async (input: TimerStartInput) => {
-      await stopTimer();
-      try {
-        return await startTimer(input);
-      } catch (error) {
-        throw new Error(
-          `The current timer was stopped, but the new timer could not be started. ${error instanceof Error ? error.message : "Review the form and try again."}`,
-          { cause: error },
-        );
-      }
+      const stopped = await stopTimer();
+      queryClient.setQueryData(timerKeys.current, { timer: null, serverNow: stopped.serverNow });
+      void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
+      return startTimer(input);
     },
+    onMutate: () => setTimerFeedback(null),
     onSuccess: (response) => {
       queryClient.setQueryData(timerKeys.current, response);
       void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
       setPendingStart(null);
-      setReplaceError(null);
+      setTimerFeedback(null);
     },
-    onError: (error) => {
-      setReplaceError(error instanceof Error ? error.message : "Timer replacement failed.");
+    onError: async () => {
+      setTimerFeedback({ message: TIMER_STATE_CHECKING_MESSAGE });
       setPendingStart(null);
-      void queryClient.invalidateQueries({ queryKey: timerKeys.current });
-      void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
+      const result = await reconcileCurrentTimer(queryClient);
+      if (result.status === "unknown") {
+        setTimerFeedback({ message: TIMER_STATE_UNKNOWN_MESSAGE });
+      } else {
+        void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
+        if (result.state.timer) {
+          setTimerFeedback({ message: "Timer state refreshed. A Timer is running.", timerId: result.state.timer.id });
+        } else {
+          setTimerFeedback({ message: "No Timer is currently running. Your new work is still in the form.", timerId: null });
+        }
+      }
     },
   });
 
   const timezone = settingsQuery.data?.settings?.timezone ?? "UTC";
-  const timer = currentQuery.data?.timer ?? null;
+  const checkingTimerState = currentQuery.isFetching || timerFeedback?.message === TIMER_STATE_CHECKING_MESSAGE;
+  const timer = currentQuery.isError || checkingTimerState ? null : currentQuery.data?.timer ?? null;
 
   return (
     <main>
@@ -100,8 +138,9 @@ export function TimerPage() {
         actions={<Button onClick={() => setManualOpen(true)}><Plus aria-hidden="true" size={16} /> Add time</Button>}
       />
       <div className="mx-auto grid max-w-6xl gap-6 px-5 py-6 sm:px-8 lg:px-10">
-        {currentQuery.isError ? <InlineError>Timer state could not be loaded. No visual timer has been started.</InlineError> : null}
-        {replaceError ? <InlineError>{replaceError}</InlineError> : null}
+        {checkingTimerState ? <p role="status" className="m-0 text-sm text-[var(--color-text-secondary)]">{TIMER_STATE_CHECKING_MESSAGE}</p> : null}
+        {!checkingTimerState && currentQuery.isError ? <InlineError>{TIMER_STATE_UNKNOWN_MESSAGE} <Button size="sm" variant="secondary" onClick={() => void retryStatusCheck()}>Retry status check</Button></InlineError> : null}
+        {!checkingTimerState && !currentQuery.isError && timerFeedback && (timerFeedback.timerId === undefined || timerFeedback.timerId === (timer?.id ?? null)) ? <InlineError>{timerFeedback.message}</InlineError> : null}
         {timer && currentQuery.data ? (
           <section aria-label="Running timer" className="rounded-[var(--radius-lg)] border border-[var(--color-accent-default)] bg-[var(--color-accent-subtle)] p-5">
             <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
@@ -115,12 +154,14 @@ export function TimerPage() {
                 <Button variant="secondary" disabled={stopMutation.isPending} onClick={() => stopMutation.mutate()}><Square aria-hidden="true" size={15} /> {stopMutation.isPending ? "Stopping…" : "Stop"}</Button>
               </div>
             </div>
-            {stopMutation.isError ? <div className="mt-4"><InlineError>Timer could not be stopped. It is still recorded as running.</InlineError></div> : null}
           </section>
         ) : null}
 
         <TimerComposer
           running={Boolean(timer)}
+          stateUnknown={currentQuery.isError || checkingTimerState || replaceMutation.isPending}
+          startFeedback={startFeedback}
+          setStartFeedback={setStartFeedback}
           onConflict={(input) => setPendingStart(input)}
         />
 
@@ -151,7 +192,7 @@ export function TimerPage() {
   );
 }
 
-function TimerComposer({ running, onConflict }: { running: boolean; onConflict: (input: TimerStartInput) => void }) {
+function TimerComposer({ running, stateUnknown, startFeedback, setStartFeedback, onConflict }: { running: boolean; stateUnknown: boolean; startFeedback: StartFeedback | null; setStartFeedback: Dispatch<SetStateAction<StartFeedback | null>>; onConflict: (input: TimerStartInput) => void }) {
   const queryClient = useQueryClient();
   const { control, formState: { errors }, handleSubmit, register, setError, setValue, reset } = useForm<TimerFormValues>({
     defaultValues: { description: "", clientId: "", projectId: "", taskId: "", billable: true },
@@ -173,29 +214,43 @@ function TimerComposer({ running, onConflict }: { running: boolean; onConflict: 
   });
   const mutation = useMutation({
     mutationFn: (values: TimerFormValues) => startTimer({ ...values, taskId: values.taskId || null }),
+    onMutate: () => setStartFeedback(null),
     onSuccess: (response) => {
       queryClient.setQueryData(timerKeys.current, response);
       reset();
     },
-    onError: (error, values) => {
-      if (error instanceof TimeEntryApiError && error.code === "TIMER_ALREADY_RUNNING") {
-        onConflict({ ...values, taskId: values.taskId || null });
+    onError: async (error, values) => {
+      if (error instanceof TimeEntryApiError && error.code === "VALIDATION_ERROR" && error.fieldErrors) {
+        setStartFeedback({ message: error.message });
+        let focus = true;
+        for (const [field, messages] of Object.entries(error.fieldErrors)) {
+          if (!messages?.[0] || !["description", "clientId", "projectId", "taskId", "billable"].includes(field)) continue;
+          setError(field as keyof TimerFormValues, { type: "server", message: messages[0] }, { shouldFocus: focus });
+          focus = false;
+        }
         return;
       }
-      if (!(error instanceof TimeEntryApiError) || !error.fieldErrors) return;
-      let focus = true;
-      for (const [field, messages] of Object.entries(error.fieldErrors)) {
-        if (!messages?.[0] || !["description", "clientId", "projectId", "taskId", "billable"].includes(field)) continue;
-        setError(field as keyof TimerFormValues, { type: "server", message: messages[0] }, { shouldFocus: focus });
-        focus = false;
+      setStartFeedback({ message: TIMER_STATE_CHECKING_MESSAGE });
+      const result = await reconcileCurrentTimer(queryClient);
+      if (result.status === "unknown") {
+        setStartFeedback({ message: TIMER_STATE_UNKNOWN_MESSAGE });
+      } else if (result.state.timer) {
+        if (error instanceof TimeEntryApiError && error.code === "TIMER_ALREADY_RUNNING") {
+          setStartFeedback(null);
+          onConflict({ ...values, taskId: values.taskId || null });
+        } else {
+          setStartFeedback({ message: "Timer state refreshed. A Timer is running.", running: true });
+        }
+      } else {
+        setStartFeedback({ message: "Timer start was not confirmed. No Timer is currently running.", running: false });
       }
     },
   });
   return (
-    <section aria-label={running ? "Start something else" : "What are you working on?"} className="rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-5">
-      <div className="mb-5"><h2 id="timer-composer-heading" className="m-0 text-base font-semibold">{running ? "Start something else" : "What are you working on?"}</h2>{running ? <p className="mb-0 mt-1 text-xs text-[var(--color-text-muted)]">Starting this will ask what to do with the current timer.</p> : null}</div>
+    <section aria-label={stateUnknown ? "Timer state unconfirmed" : running ? "Start something else" : "What are you working on?"} className="rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-5">
+      <div className="mb-5"><h2 id="timer-composer-heading" className="m-0 text-base font-semibold">{stateUnknown ? "Timer state unconfirmed" : running ? "Start something else" : "What are you working on?"}</h2>{running ? <p className="mb-0 mt-1 text-xs text-[var(--color-text-muted)]">Starting this will ask what to do with the current timer.</p> : null}</div>
       <form noValidate className="grid gap-5" onSubmit={(event) => void handleSubmit((values) => mutation.mutate(values))(event)}>
-        {mutation.isError && !(mutation.error instanceof TimeEntryApiError && mutation.error.code === "TIMER_ALREADY_RUNNING") ? <InlineError>Timer could not be started. No new time is being recorded. {mutation.error instanceof Error ? mutation.error.message : ""}</InlineError> : null}
+        {startFeedback && !(stateUnknown && startFeedback.message === TIMER_STATE_UNKNOWN_MESSAGE) && (startFeedback.running === undefined || startFeedback.running === running) ? <InlineError>{startFeedback.message}</InlineError> : null}
         <Field htmlFor="timerDescription" label="Description" error={errors.description?.message}><TextInput id="timerDescription" autoFocus placeholder="What are you working on?" {...register("description")} /></Field>
         <HierarchySelects value={{ clientId, projectId, taskId }} onChange={(value) => {
           if (value.projectId && value.projectId !== projectId) {
@@ -211,7 +266,7 @@ function TimerComposer({ running, onConflict }: { running: boolean; onConflict: 
         {(errors.clientId || errors.projectId || errors.taskId) ? <p role="alert" className="m-0 text-xs text-[var(--color-danger-default)]">{errors.clientId?.message ?? errors.projectId?.message ?? errors.taskId?.message}</p> : null}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <Controller control={control} name="billable" render={({ field }) => <label className="flex items-center gap-3 text-sm font-medium"><Checkbox checked={field.value} onCheckedChange={(checked) => field.onChange(checked === true)} /> Billable</label>} />
-          <Button type="submit" disabled={mutation.isPending}><Clock3 aria-hidden="true" size={16} /> {mutation.isPending ? "Starting…" : "Start"}</Button>
+          <Button type="submit" disabled={mutation.isPending || stateUnknown}><Clock3 aria-hidden="true" size={16} /> {mutation.isPending ? "Starting…" : "Start"}</Button>
         </div>
       </form>
     </section>
