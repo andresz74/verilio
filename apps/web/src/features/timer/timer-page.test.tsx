@@ -137,15 +137,15 @@ describe("TimerPage", () => {
     expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
   });
 
-  it("shows an unknown Timer state when Start and reconciliation both fail", async () => {
+  it("clears unknown Start feedback after Retry confirms no Timer is running", async () => {
     handlers();
     let currentReads = 0;
     server.use(
       http.get("/api/v1/timer/current", () => {
         currentReads += 1;
-        return currentReads === 1
-          ? HttpResponse.json({ timer: null, serverNow: "2026-09-05T14:00:00.000Z" })
-          : HttpResponse.error();
+        return currentReads === 2 || currentReads === 3
+          ? HttpResponse.error()
+          : HttpResponse.json({ timer: null, serverNow: "2026-09-05T14:00:00.000Z" });
       }),
       http.post("/api/v1/timer/start", () => HttpResponse.error()),
     );
@@ -158,6 +158,17 @@ describe("TimerPage", () => {
     expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Unconfirmed start");
     expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
     expect(screen.queryByText(/No Timer is currently running/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry status check" }));
+    expect(await screen.findByText(/Timer state could not be confirmed/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Retry status check" }));
+    await waitFor(() => expect(screen.queryByText(/Timer state could not be confirmed/)).not.toBeInTheDocument());
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Unconfirmed start");
+    expect(screen.getByRole("button", { name: "Start" })).toBeEnabled();
+    expect(screen.getByRole("region", { name: "What are you working on?" })).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
+    expect(currentReads).toBe(4);
   });
 
   it("refreshes another-tab Timer after TIMER_ALREADY_RUNNING before offering replacement", async () => {
@@ -220,15 +231,15 @@ describe("TimerPage", () => {
     expect(queryClient.getQueryData(timerKeys.current)).toMatchObject({ timer: null, serverNow: "2026-09-05T14:00:00.000Z" });
   });
 
-  it("does not present stale Running state as confirmed when Stop reconciliation fails", async () => {
+  it("restores Running and clears unknown Stop feedback after Retry succeeds", async () => {
     handlers();
     let currentReads = 0;
     server.use(
       http.get("/api/v1/timer/current", () => {
         currentReads += 1;
-        return currentReads === 1
-          ? HttpResponse.json({ timer: running, serverNow: "2026-09-05T14:00:00.000Z" })
-          : HttpResponse.error();
+        return currentReads === 2
+          ? HttpResponse.error()
+          : HttpResponse.json({ timer: running, serverNow: "2026-09-05T14:00:00.000Z" });
       }),
       http.post("/api/v1/timer/stop", () => HttpResponse.error()),
     );
@@ -240,6 +251,36 @@ describe("TimerPage", () => {
     expect(await screen.findByText(/Timer state could not be confirmed/)).toBeVisible();
     expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
     expect(screen.queryByText("Timer is still running.")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry status check" }));
+    expect(await screen.findByRole("region", { name: "Running timer" })).toBeVisible();
+    await waitFor(() => expect(screen.queryByText(/Timer state could not be confirmed/)).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+  });
+
+  it("restores idle and clears unknown Stop feedback after Retry confirms no Timer", async () => {
+    handlers();
+    let currentReads = 0;
+    server.use(
+      http.get("/api/v1/timer/current", () => {
+        currentReads += 1;
+        return currentReads === 2
+          ? HttpResponse.error()
+          : HttpResponse.json({ timer: currentReads === 1 ? running : null, serverNow: "2026-09-05T14:00:00.000Z" });
+      }),
+      http.post("/api/v1/timer/stop", () => HttpResponse.error()),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("region", { name: "Running timer" });
+    await user.click(within(screen.getByRole("region", { name: "Running timer" })).getByRole("button", { name: "Stop" }));
+    expect(await screen.findByText(/Timer state could not be confirmed/)).toBeVisible();
+
+    await user.click(screen.getByRole("button", { name: "Retry status check" }));
+    await waitFor(() => expect(screen.queryByText(/Timer state could not be confirmed/)).not.toBeInTheDocument());
+    expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "What are you working on?" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Start" })).toBeEnabled();
   });
 
   it("recovers the actual new Timer when replacement Start commits but its response is lost", async () => {

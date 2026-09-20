@@ -13,7 +13,7 @@ import {
 } from "@verilio/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock3, Plus, Square } from "lucide-react";
-import { useState } from "react";
+import { useState, type Dispatch, type SetStateAction } from "react";
 import { Link } from "react-router-dom";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
@@ -35,6 +35,7 @@ import {
 import { TimeEntryFormDialog } from "./time-entry-form-dialog.js";
 import { formatDuration, formatHourlyRate, hierarchyLabel } from "./time-format.js";
 import {
+  isUnconfirmedTimerFeedback,
   reconcileCurrentTimer,
   TIMER_STATE_CHECKING_MESSAGE,
   TIMER_STATE_UNKNOWN_MESSAGE,
@@ -49,6 +50,7 @@ const TimerFormSchema = z.object({
 });
 type TimerFormValues = z.infer<typeof TimerFormSchema>;
 type TimerFeedback = { message: string; timerId?: string | null };
+type StartFeedback = { message: string; running?: boolean };
 
 export function TimerPage() {
   const queryClient = useQueryClient();
@@ -57,9 +59,17 @@ export function TimerPage() {
   const [deleting, setDeleting] = useState<TimeEntryDto | null>(null);
   const [pendingStart, setPendingStart] = useState<TimerStartInput | null>(null);
   const [timerFeedback, setTimerFeedback] = useState<TimerFeedback | null>(null);
+  const [startFeedback, setStartFeedback] = useState<StartFeedback | null>(null);
   const currentQuery = useQuery({ queryKey: timerKeys.current, queryFn: getCurrentTimer });
   const recentQuery = useQuery({ queryKey: timerKeys.recent, queryFn: getRecentTimeEntries });
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: getSettings });
+  const retryStatusCheck = async () => {
+    const result = await currentQuery.refetch();
+    if (result.isSuccess) {
+      setTimerFeedback((feedback) => feedback && isUnconfirmedTimerFeedback(feedback.message) ? null : feedback);
+      setStartFeedback((feedback) => feedback && isUnconfirmedTimerFeedback(feedback.message) ? null : feedback);
+    }
+  };
 
   const stopMutation = useMutation({
     mutationFn: stopTimer,
@@ -129,7 +139,7 @@ export function TimerPage() {
       />
       <div className="mx-auto grid max-w-6xl gap-6 px-5 py-6 sm:px-8 lg:px-10">
         {checkingTimerState ? <p role="status" className="m-0 text-sm text-[var(--color-text-secondary)]">{TIMER_STATE_CHECKING_MESSAGE}</p> : null}
-        {!checkingTimerState && currentQuery.isError ? <InlineError>{TIMER_STATE_UNKNOWN_MESSAGE} <Button size="sm" variant="secondary" onClick={() => void currentQuery.refetch()}>Retry status check</Button></InlineError> : null}
+        {!checkingTimerState && currentQuery.isError ? <InlineError>{TIMER_STATE_UNKNOWN_MESSAGE} <Button size="sm" variant="secondary" onClick={() => void retryStatusCheck()}>Retry status check</Button></InlineError> : null}
         {!checkingTimerState && !currentQuery.isError && timerFeedback && (timerFeedback.timerId === undefined || timerFeedback.timerId === (timer?.id ?? null)) ? <InlineError>{timerFeedback.message}</InlineError> : null}
         {timer && currentQuery.data ? (
           <section aria-label="Running timer" className="rounded-[var(--radius-lg)] border border-[var(--color-accent-default)] bg-[var(--color-accent-subtle)] p-5">
@@ -150,6 +160,8 @@ export function TimerPage() {
         <TimerComposer
           running={Boolean(timer)}
           stateUnknown={currentQuery.isError || checkingTimerState || replaceMutation.isPending}
+          startFeedback={startFeedback}
+          setStartFeedback={setStartFeedback}
           onConflict={(input) => setPendingStart(input)}
         />
 
@@ -180,9 +192,8 @@ export function TimerPage() {
   );
 }
 
-function TimerComposer({ running, stateUnknown, onConflict }: { running: boolean; stateUnknown: boolean; onConflict: (input: TimerStartInput) => void }) {
+function TimerComposer({ running, stateUnknown, startFeedback, setStartFeedback, onConflict }: { running: boolean; stateUnknown: boolean; startFeedback: StartFeedback | null; setStartFeedback: Dispatch<SetStateAction<StartFeedback | null>>; onConflict: (input: TimerStartInput) => void }) {
   const queryClient = useQueryClient();
-  const [startFeedback, setStartFeedback] = useState<{ message: string; running?: boolean } | null>(null);
   const { control, formState: { errors }, handleSubmit, register, setError, setValue, reset } = useForm<TimerFormValues>({
     defaultValues: { description: "", clientId: "", projectId: "", taskId: "", billable: true },
     resolver: zodResolver(TimerFormSchema),

@@ -23,6 +23,7 @@ import {
   timerKeys,
 } from "../features/timer/time-entry-api.js";
 import {
+  isUnconfirmedTimerFeedback,
   reconcileCurrentTimer,
   TIMER_STATE_CHECKING_MESSAGE,
   TIMER_STATE_UNKNOWN_MESSAGE,
@@ -101,6 +102,12 @@ function RunningTimerIndicator({ onNavigate }: { onNavigate?: (() => void) | und
   const queryClient = useQueryClient();
   const [stopFeedback, setStopFeedback] = useState<{ message: string; timerId?: string } | null>(null);
   const currentQuery = useQuery({ queryKey: timerKeys.current, queryFn: getCurrentTimer });
+  const retryStatusCheck = async () => {
+    const result = await currentQuery.refetch();
+    if (result.isSuccess) {
+      setStopFeedback((feedback) => feedback && isUnconfirmedTimerFeedback(feedback.message) ? null : feedback);
+    }
+  };
   const stopMutation = useMutation({
     mutationFn: stopTimer,
     onMutate: () => setStopFeedback(null),
@@ -128,7 +135,7 @@ function RunningTimerIndicator({ onNavigate }: { onNavigate?: (() => void) | und
     return <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] px-3 py-3"><p role="status" className="m-0 text-sm text-[var(--color-text-secondary)]">{TIMER_STATE_CHECKING_MESSAGE}</p></div>;
   }
   if (currentQuery.isError) {
-    return <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] px-3 py-3"><InlineError>{TIMER_STATE_UNKNOWN_MESSAGE}</InlineError><Button size="sm" variant="secondary" className="mt-2" onClick={() => void currentQuery.refetch()}>Retry status check</Button></div>;
+    return <div className="rounded-[var(--radius-md)] bg-[var(--color-bg-subtle)] px-3 py-3"><InlineError>{TIMER_STATE_UNKNOWN_MESSAGE}</InlineError><Button size="sm" variant="secondary" className="mt-2" onClick={() => void retryStatusCheck()}>Retry status check</Button></div>;
   }
   const timer = currentQuery.data?.timer;
   if (!timer || !currentQuery.data) {

@@ -6,6 +6,10 @@ import { getCurrentTimer, timerKeys } from "./time-entry-api.js";
 export const TIMER_STATE_UNKNOWN_MESSAGE = "Timer state could not be confirmed. Check your connection and try again.";
 export const TIMER_STATE_CHECKING_MESSAGE = "Checking current Timer state…";
 
+export function isUnconfirmedTimerFeedback(message: string): boolean {
+  return message === TIMER_STATE_UNKNOWN_MESSAGE || message === TIMER_STATE_CHECKING_MESSAGE;
+}
+
 export type TimerReconciliation =
   | { status: "confirmed"; state: TimerStateResponse }
   | { status: "unknown" };

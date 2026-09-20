@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -112,14 +112,14 @@ describe("global Timer indicator reconciliation", () => {
     expect(screen.getByText("Running")).toBeVisible();
   });
 
-  it("shows unconfirmed state rather than stale Running after reconciliation fails", async () => {
+  it("restores Running and clears unknown feedback after a successful status Retry", async () => {
     let currentReads = 0;
     server.use(
       http.get("/api/v1/timer/current", () => {
         currentReads += 1;
-        return currentReads === 1
-          ? HttpResponse.json({ timer: running, serverNow: "2026-09-05T14:00:00.000Z" })
-          : HttpResponse.error();
+        return currentReads === 2
+          ? HttpResponse.error()
+          : HttpResponse.json({ timer: running, serverNow: "2026-09-05T14:00:00.000Z" });
       }),
       http.post("/api/v1/timer/stop", () => HttpResponse.error()),
     );
@@ -131,5 +131,10 @@ describe("global Timer indicator reconciliation", () => {
     expect(await screen.findByText(/Timer state could not be confirmed/)).toBeVisible();
     expect(screen.queryByText("Running")).not.toBeInTheDocument();
     expect(screen.queryByText("Stop failed. Timer is still running.")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Retry status check" }));
+    expect(await screen.findByText("Running")).toBeVisible();
+    await waitFor(() => expect(screen.queryByText(/Timer state could not be confirmed/)).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
   });
 });
