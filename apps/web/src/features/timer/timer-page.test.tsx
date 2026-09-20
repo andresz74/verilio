@@ -6,6 +6,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import { server } from "../../test/server.js";
+import { timerKeys } from "./time-entry-api.js";
 import { TimerPage } from "./timer-page.js";
 
 const clientId = "11111111-1111-4111-8111-111111111111";
@@ -46,7 +47,14 @@ function handlers() {
 
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  return render(<MemoryRouter><QueryClientProvider client={queryClient}><TimerPage /></QueryClientProvider></MemoryRouter>);
+  return { ...render(<MemoryRouter><QueryClientProvider client={queryClient}><TimerPage /></QueryClientProvider></MemoryRouter>), queryClient };
+}
+
+async function fillStartForm(user: ReturnType<typeof userEvent.setup>, description: string) {
+  await user.type(screen.getByRole("textbox", { name: /Description/ }), description);
+  await user.selectOptions(await screen.findByLabelText("Client"), clientId);
+  await user.selectOptions(await screen.findByLabelText("Project"), projectId);
+  await user.selectOptions(await screen.findByLabelText("Task (optional)"), taskId);
 }
 
 describe("TimerPage", () => {
@@ -67,7 +75,7 @@ describe("TimerPage", () => {
     await user.selectOptions(await screen.findByLabelText("Project"), projectId);
     await user.selectOptions(await screen.findByLabelText("Task (optional)"), taskId);
     await user.click(screen.getByRole("button", { name: "Start" }));
-    expect(await screen.findByText(/No new time is being recorded/)).toBeVisible();
+    expect(await screen.findByText(/No Timer is currently running/)).toBeVisible();
     expect(screen.getAllByRole("textbox", { name: /Description/ })[0]).toHaveValue("Reliable timer");
     shouldFail = false;
     await user.click(screen.getByRole("button", { name: "Start" }));
@@ -84,8 +92,214 @@ describe("TimerPage", () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "Reliable timer" })).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Stop" }));
-    expect(await screen.findByText(/still recorded as running/)).toBeVisible();
+    expect(await screen.findByText("Timer is still running.")).toBeVisible();
     expect(screen.getByText("Running")).toBeVisible();
+  });
+
+  it("recovers a committed Start whose response is lost without clearing composer input", async () => {
+    handlers();
+    let currentTimer: typeof running | null = null;
+    let currentReads = 0;
+    server.use(
+      http.get("/api/v1/timer/current", () => {
+        currentReads += 1;
+        return HttpResponse.json({ timer: currentTimer, serverNow: "2026-09-05T14:00:00.000Z" });
+      }),
+      http.post("/api/v1/timer/start", async ({ request }) => {
+        const input = await request.json() as { description: string };
+        currentTimer = { ...running, description: input.description };
+        return HttpResponse.error();
+      }),
+    );
+    const user = userEvent.setup();
+    const { queryClient } = renderPage();
+    await fillStartForm(user, "Interrupted start");
+    await user.click(screen.getByRole("button", { name: "Start" }));
+
+    expect(await screen.findByRole("heading", { name: "Interrupted start" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Interrupted start");
+    expect(screen.getByText("Timer state refreshed. A Timer is running.")).toBeVisible();
+    expect(screen.queryByText(/No new time is being recorded/)).not.toBeInTheDocument();
+    expect(currentReads).toBeGreaterThanOrEqual(2);
+    expect(queryClient.getQueryData(timerKeys.current)).toMatchObject({ timer: { description: "Interrupted start" }, serverNow: "2026-09-05T14:00:00.000Z" });
+  });
+
+  it("preserves the Start form and confirms no running Timer after an uncommitted failure", async () => {
+    handlers();
+    server.use(http.post("/api/v1/timer/start", () => HttpResponse.error()));
+    const user = userEvent.setup();
+    renderPage();
+    await fillStartForm(user, "Retry this work");
+    await user.click(screen.getByRole("button", { name: "Start" }));
+
+    expect(await screen.findByText("Timer start was not confirmed. No Timer is currently running.")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Retry this work");
+    expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
+  });
+
+  it("shows an unknown Timer state when Start and reconciliation both fail", async () => {
+    handlers();
+    let currentReads = 0;
+    server.use(
+      http.get("/api/v1/timer/current", () => {
+        currentReads += 1;
+        return currentReads === 1
+          ? HttpResponse.json({ timer: null, serverNow: "2026-09-05T14:00:00.000Z" })
+          : HttpResponse.error();
+      }),
+      http.post("/api/v1/timer/start", () => HttpResponse.error()),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await fillStartForm(user, "Unconfirmed start");
+    await user.click(screen.getByRole("button", { name: "Start" }));
+
+    expect(await screen.findByText(/Timer state could not be confirmed/)).toBeVisible();
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Unconfirmed start");
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    expect(screen.queryByText(/No Timer is currently running/)).not.toBeInTheDocument();
+  });
+
+  it("refreshes another-tab Timer after TIMER_ALREADY_RUNNING before offering replacement", async () => {
+    handlers();
+    let currentTimer: typeof running | null = null;
+    server.use(
+      http.get("/api/v1/timer/current", () => HttpResponse.json({ timer: currentTimer, serverNow: "2026-09-05T14:00:00.000Z" })),
+      http.post("/api/v1/timer/start", () => {
+        currentTimer = running;
+        return HttpResponse.json({ error: { code: "TIMER_ALREADY_RUNNING", message: "A timer is already running.", fieldErrors: null, requestId: "test" } }, { status: 409 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await fillStartForm(user, "Work from this tab");
+    await user.click(screen.getByRole("button", { name: "Start" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "A timer is already running" });
+    await user.click(within(dialog).getByRole("button", { name: "Keep current timer" }));
+    expect(within(await screen.findByRole("region", { name: "Running timer" })).getByRole("heading", { name: "Reliable timer" })).toBeVisible();
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Work from this tab");
+  });
+
+  it("recovers a committed Stop whose response is lost and refreshes Recent time", async () => {
+    handlers();
+    let currentTimer: typeof running | null = running;
+    let currentReads = 0;
+    let recentReads = 0;
+    let finishReconciliation!: () => void;
+    const reconciliationGate = new Promise<void>((resolve) => { finishReconciliation = resolve; });
+    server.use(
+      http.get("/api/v1/timer/current", async () => {
+        currentReads += 1;
+        if (currentReads > 1) await reconciliationGate;
+        return HttpResponse.json({ timer: currentTimer, serverNow: "2026-09-05T14:00:00.000Z" });
+      }),
+      http.get("/api/v1/time-entries/recent", () => {
+        recentReads += 1;
+        return HttpResponse.json({ entries: [] });
+      }),
+      http.post("/api/v1/timer/stop", () => {
+        currentTimer = null;
+        return HttpResponse.error();
+      }),
+    );
+    const user = userEvent.setup();
+    const { queryClient } = renderPage();
+    await screen.findByRole("region", { name: "Running timer" });
+    await waitFor(() => expect(recentReads).toBeGreaterThanOrEqual(1));
+    await user.click(within(screen.getByRole("region", { name: "Running timer" })).getByRole("button", { name: "Stop" }));
+    try {
+      expect(await screen.findByRole("status")).toHaveTextContent("Checking current Timer state");
+      expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
+    } finally {
+      finishReconciliation();
+    }
+    expect(await screen.findByText("Timer state refreshed. No Timer is currently running.")).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
+    await waitFor(() => expect(recentReads).toBeGreaterThanOrEqual(2));
+    expect(queryClient.getQueryData(timerKeys.current)).toMatchObject({ timer: null, serverNow: "2026-09-05T14:00:00.000Z" });
+  });
+
+  it("does not present stale Running state as confirmed when Stop reconciliation fails", async () => {
+    handlers();
+    let currentReads = 0;
+    server.use(
+      http.get("/api/v1/timer/current", () => {
+        currentReads += 1;
+        return currentReads === 1
+          ? HttpResponse.json({ timer: running, serverNow: "2026-09-05T14:00:00.000Z" })
+          : HttpResponse.error();
+      }),
+      http.post("/api/v1/timer/stop", () => HttpResponse.error()),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("region", { name: "Running timer" });
+    await user.click(within(screen.getByRole("region", { name: "Running timer" })).getByRole("button", { name: "Stop" }));
+
+    expect(await screen.findByText(/Timer state could not be confirmed/)).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Timer is still running.")).not.toBeInTheDocument();
+  });
+
+  it("recovers the actual new Timer when replacement Start commits but its response is lost", async () => {
+    handlers();
+    let currentTimer: typeof running | null = running;
+    let startCalls = 0;
+    server.use(
+      http.get("/api/v1/timer/current", () => HttpResponse.json({ timer: currentTimer, serverNow: "2026-09-05T14:00:00.000Z" })),
+      http.post("/api/v1/timer/start", async ({ request }) => {
+        startCalls += 1;
+        if (startCalls === 1) {
+          return HttpResponse.json({ error: { code: "TIMER_ALREADY_RUNNING", message: "A timer is already running.", fieldErrors: null, requestId: "test" } }, { status: 409 });
+        }
+        const input = await request.json() as { description: string };
+        currentTimer = { ...running, id: "99999999-9999-4999-8999-999999999999", description: input.description };
+        return HttpResponse.error();
+      }),
+      http.post("/api/v1/timer/stop", () => {
+        currentTimer = null;
+        return HttpResponse.json({ entry: { ...running, endAt: "2026-09-05T14:00:00.000Z", durationSeconds: 60, hourlyRate: "100.0000", currency: "USD" }, serverNow: "2026-09-05T14:00:00.000Z" });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await fillStartForm(user, "Replacement work");
+    await user.click(screen.getByRole("button", { name: "Start" }));
+    const dialog = await screen.findByRole("dialog", { name: "A timer is already running" });
+    await user.click(within(dialog).getByRole("button", { name: "Stop current and start this one" }));
+
+    expect(await screen.findByRole("heading", { name: "Replacement work" })).toBeVisible();
+    expect(screen.getByText("Timer state refreshed. A Timer is running.")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Replacement work");
+    expect(startCalls).toBe(2);
+  });
+
+  it("does not start replacement work blindly after an ambiguous Stop", async () => {
+    handlers();
+    let currentTimer: typeof running | null = running;
+    let startCalls = 0;
+    server.use(
+      http.get("/api/v1/timer/current", () => HttpResponse.json({ timer: currentTimer, serverNow: "2026-09-05T14:00:00.000Z" })),
+      http.post("/api/v1/timer/start", () => {
+        startCalls += 1;
+        return HttpResponse.json({ error: { code: "TIMER_ALREADY_RUNNING", message: "A timer is already running.", fieldErrors: null, requestId: "test" } }, { status: 409 });
+      }),
+      http.post("/api/v1/timer/stop", () => {
+        currentTimer = null;
+        return HttpResponse.error();
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await fillStartForm(user, "Preserved replacement");
+    await user.click(screen.getByRole("button", { name: "Start" }));
+    const dialog = await screen.findByRole("dialog", { name: "A timer is already running" });
+    await user.click(within(dialog).getByRole("button", { name: "Stop current and start this one" }));
+
+    expect(await screen.findByText("No Timer is currently running. Your new work is still in the form.")).toBeVisible();
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Preserved replacement");
+    expect(startCalls).toBe(1);
   });
 
   it("formats Recent time rates without mutating values or changing row actions", async () => {
