@@ -8,7 +8,7 @@ import type {
   TimerStateResponse,
   TimerStopResponse,
 } from "@verilio/contracts";
-import type { VerilioDatabase } from "@verilio/db";
+import type { VerilioDatabase, VerilioTransaction } from "@verilio/db";
 import {
   businessProfiles,
   clients,
@@ -266,70 +266,75 @@ export class TimeEntryService implements TimeEntryServiceContract {
   }
 
   async update(id: string, input: TimeEntryUpdateInput): Promise<TimeEntryDto | null> {
-    const existing = await this.loadOwnedRow(id);
-    if (!existing) return null;
-    if ((await this.loadInvoiceReferences([id])).has(id)) {
-      throw new ApiError(409, "TIME_ENTRY_INVOICED", "Remove this Time Entry from its Invoice before editing it.");
-    }
-    if (!existing.durationSeconds || !existing.endAt && existing.mode === "timer") {
-      throw new ApiError(409, "TIME_ENTRY_NOT_EDITABLE", "Stop the timer before editing it.");
-    }
-    if (existing.mode !== input.mode) {
-      throw validationError("mode", "The time-entry mode cannot be changed.");
-    }
-    const hierarchyChanged =
-      existing.clientId !== input.clientId ||
-      existing.projectId !== input.projectId ||
-      existing.taskId !== input.taskId;
-    const context = await this.requireContext(input, hierarchyChanged);
-    const timing = this.resolveCompletedTiming(input, context.timezone);
-    const hourlyRate =
-      existing.billable && input.billable
-        ? existing.hourlyRate
-        : resolveHourlyRate({
-            billable: input.billable,
-            projectRate: context.projectRate,
-            clientRate: context.clientRate,
-            businessRate: context.businessRate,
-          });
-    const currency =
-      existing.billable && input.billable
-        ? existing.currency
-        : input.billable
-          ? context.currency
-          : null;
-    const [row] = await this.db
-      .update(timeEntries)
-      .set({
-        clientId: input.clientId,
-        projectId: input.projectId,
-        taskId: input.taskId,
-        description: input.description.trim(),
-        ...timing,
-        billable: input.billable,
-        hourlyRate,
-        currency,
-        updatedAt: this.clock(),
-      })
-      .where(and(eq(timeEntries.id, id), eq(timeEntries.userId, this.ownerId)))
-      .returning({ id: timeEntries.id });
-    return row ? this.loadDtoRequired(row.id) : null;
+    const updatedId = await this.db.transaction(async (tx) => {
+      const existing = await this.loadOwnedRowForUpdate(tx, id);
+      if (!existing) return null;
+      if ((await this.loadInvoiceReferences([id], tx)).has(id)) {
+        throw new ApiError(409, "TIME_ENTRY_INVOICED", "Remove this Time Entry from its Invoice before editing it.");
+      }
+      if (!existing.durationSeconds || !existing.endAt && existing.mode === "timer") {
+        throw new ApiError(409, "TIME_ENTRY_NOT_EDITABLE", "Stop the timer before editing it.");
+      }
+      if (existing.mode !== input.mode) {
+        throw validationError("mode", "The time-entry mode cannot be changed.");
+      }
+      const hierarchyChanged =
+        existing.clientId !== input.clientId ||
+        existing.projectId !== input.projectId ||
+        existing.taskId !== input.taskId;
+      const context = await this.requireContext(input, hierarchyChanged, tx);
+      const timing = this.resolveCompletedTiming(input, context.timezone);
+      const hourlyRate =
+        existing.billable && input.billable
+          ? existing.hourlyRate
+          : resolveHourlyRate({
+              billable: input.billable,
+              projectRate: context.projectRate,
+              clientRate: context.clientRate,
+              businessRate: context.businessRate,
+            });
+      const currency =
+        existing.billable && input.billable
+          ? existing.currency
+          : input.billable
+            ? context.currency
+            : null;
+      const [row] = await tx
+        .update(timeEntries)
+        .set({
+          clientId: input.clientId,
+          projectId: input.projectId,
+          taskId: input.taskId,
+          description: input.description.trim(),
+          ...timing,
+          billable: input.billable,
+          hourlyRate,
+          currency,
+          updatedAt: this.clock(),
+        })
+        .where(and(eq(timeEntries.id, id), eq(timeEntries.userId, this.ownerId)))
+        .returning({ id: timeEntries.id });
+      return row?.id ?? null;
+    });
+    return updatedId ? this.loadDtoRequired(updatedId) : null;
   }
 
   async delete(id: string): Promise<boolean> {
-    const existing = await this.loadOwnedRow(id);
-    if (!existing) return false;
-    if ((await this.loadInvoiceReferences([id])).has(id)) {
-      throw new ApiError(409, "TIME_ENTRY_INVOICED", "Remove this Time Entry from its Invoice before deleting it.");
-    }
-    if (!existing.durationSeconds) {
-      throw new ApiError(409, "TIME_ENTRY_NOT_EDITABLE", "A running timer cannot be deleted.");
-    }
-    const rows = await this.db
-      .delete(timeEntries)
-      .where(and(eq(timeEntries.id, id), eq(timeEntries.userId, this.ownerId)))
-      .returning({ id: timeEntries.id });
-    return rows.length > 0;
+    return this.db.transaction(async (tx) => {
+      const existing = await this.loadOwnedRowForUpdate(tx, id);
+      if (!existing) return false;
+      if ((await this.loadInvoiceReferences([id], tx)).has(id)) {
+        throw new ApiError(409, "TIME_ENTRY_INVOICED", "Remove this Time Entry from its Invoice before deleting it.");
+      }
+      if (!existing.durationSeconds) {
+        throw new ApiError(409, "TIME_ENTRY_NOT_EDITABLE", "A running timer cannot be deleted.");
+      }
+      const rows = await tx
+        .delete(timeEntries)
+        .where(and(eq(timeEntries.id, id), eq(timeEntries.userId, this.ownerId)))
+        .returning({ id: timeEntries.id });
+      return rows.length > 0;
+    });
   }
 
   private resolveCompletedTiming(input: TimeEntryUpdateInput | ManualTimeEntryInput, timezone: string) {
@@ -360,8 +365,9 @@ export class TimeEntryService implements TimeEntryServiceContract {
   private async requireContext(
     input: { clientId: string; projectId: string; taskId: string | null },
     requireAvailable: boolean,
+    db: VerilioDatabase | VerilioTransaction = this.db,
   ): Promise<TimeContext> {
-    const [profile] = await this.db
+    const [profile] = await db
       .select({
         businessRate: businessProfiles.defaultHourlyRate,
         timezone: businessProfiles.timezone,
@@ -372,7 +378,7 @@ export class TimeEntryService implements TimeEntryServiceContract {
     if (!profile) {
       throw new ApiError(409, "SETTINGS_REQUIRED", "Complete Business settings before tracking time.");
     }
-    const [client] = await this.db
+    const [client] = await db
       .select({
         rate: clients.defaultHourlyRate,
         active: clients.active,
@@ -384,7 +390,7 @@ export class TimeEntryService implements TimeEntryServiceContract {
     if (!client || requireAvailable && !client.active) {
       throw validationError("clientId", "Choose an active client you can access.");
     }
-    const [project] = await this.db
+    const [project] = await db
       .select({ rate: projects.defaultHourlyRate, active: projects.active })
       .from(projects)
       .where(
@@ -399,7 +405,7 @@ export class TimeEntryService implements TimeEntryServiceContract {
       throw validationError("projectId", "Choose an active project for the selected client.");
     }
     if (input.taskId) {
-      const [task] = await this.db
+      const [task] = await db
         .select({ active: tasks.active })
         .from(tasks)
         .where(and(eq(tasks.id, input.taskId), eq(tasks.projectId, input.projectId)))
@@ -417,12 +423,13 @@ export class TimeEntryService implements TimeEntryServiceContract {
     };
   }
 
-  private async loadOwnedRow(id: string): Promise<TimeEntryRow | null> {
-    const [row] = await this.db
+  private async loadOwnedRowForUpdate(tx: VerilioTransaction, id: string): Promise<TimeEntryRow | null> {
+    const [row] = await tx
       .select()
       .from(timeEntries)
       .where(and(eq(timeEntries.id, id), eq(timeEntries.userId, this.ownerId)))
-      .limit(1);
+      .limit(1)
+      .for("update");
     return row ?? null;
   }
 
@@ -451,9 +458,9 @@ export class TimeEntryService implements TimeEntryServiceContract {
     return toDto(row.entry, row.clientName, row.projectName, row.taskName, invoice);
   }
 
-  private async loadInvoiceReferences(ids: string[]): Promise<Map<string, { id: string; invoiceNumber: string }>> {
+  private async loadInvoiceReferences(ids: string[], db: VerilioDatabase | VerilioTransaction = this.db): Promise<Map<string, { id: string; invoiceNumber: string }>> {
     if (!ids.length) return new Map();
-    const rows = await this.db
+    const rows = await db
       .select({
         timeEntryId: invoiceItemTimeEntries.timeEntryId,
         id: invoices.id,
