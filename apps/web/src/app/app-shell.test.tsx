@@ -26,6 +26,7 @@ const running = {
   hourlyRate: null,
   currency: null,
   invoice: null,
+  hasInvoiceHistory: false,
   createdAt: "2026-09-05T13:59:00.000Z",
   updatedAt: "2026-09-05T13:59:00.000Z",
 };

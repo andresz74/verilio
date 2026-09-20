@@ -595,12 +595,18 @@ describe("M8 Invoice PDF and lifecycle", () => {
     const voided = await service.void(first.id);
     expect(voided).toMatchObject({ status: "void", displayStatus: "void", invoiceNumber: first.invoiceNumber });
     expect(voided?.items[0]?.sources[0]?.id).toBe(entry.id);
-    expect((await timeService.get(entry.id))?.invoice).toBeNull();
-    expect((await new ReportService(db, OWNER_A).detailed({ from: "2026-09-01", to: "2026-09-30", billable: "all", invoiceStatus: "not-invoiced", page: 1, pageSize: 25 })).entries[0]?.id).toBe(entry.id);
+    expect(await timeService.get(entry.id)).toMatchObject({ invoice: null, hasInvoiceHistory: true });
+    await expect(timeService.delete(entry.id)).rejects.toMatchObject({ code: "TIME_ENTRY_HAS_INVOICE_HISTORY", statusCode: 409 });
+    const edited = await timeService.update(entry.id, { mode: "duration", workDate: entry.workDate, durationSeconds: 7_200, clientId: own.client.id, projectId: own.project.id, taskId: own.task.id, description: "Corrected after Void", billable: true });
+    expect(edited).toMatchObject({ description: "Corrected after Void", durationSeconds: 7_200, invoice: null, hasInvoiceHistory: true });
+    expect((await service.get(first.id))?.items[0]).toMatchObject({ amount: imported?.items[0]?.amount, description: imported?.items[0]?.description, sources: [{ description: "Corrected after Void" }] });
+    expect((await new ReportService(db, OWNER_A).detailed({ from: "2026-09-01", to: "2026-09-30", billable: "all", invoiceStatus: "not-invoiced", page: 1, pageSize: 25 })).entries[0]).toMatchObject({ id: entry.id, invoiceStatus: "not-invoiced", hasInvoiceHistory: true });
     const second = await service.create(draftInput(own.client.id));
     expect((await service.eligibleTime(second.id, { from: "2026-09-01", to: "2026-09-30" }))?.entries.map(({ id }) => id)).toContain(entry.id);
     await service.importTime(second.id, { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entry.id], grouping: "individual" });
-    expect((await timeService.get(entry.id))?.invoice?.id).toBe(second.id);
+    expect(await timeService.get(entry.id)).toMatchObject({ invoice: { id: second.id }, hasInvoiceHistory: true });
+    await expect(timeService.update(entry.id, { mode: "duration", workDate: entry.workDate, durationSeconds: 3_600, clientId: own.client.id, projectId: own.project.id, taskId: own.task.id, description: "Blocked active edit", billable: true })).rejects.toMatchObject({ code: "TIME_ENTRY_INVOICED" });
+    await expect(timeService.delete(entry.id)).rejects.toMatchObject({ code: "TIME_ENTRY_INVOICED", statusCode: 409 });
     const historicalLinks = await db.select().from(invoiceItemTimeEntries).where(eq(invoiceItemTimeEntries.timeEntryId, entry.id));
     expect(historicalLinks).toHaveLength(2);
     expect((await service.get(first.id))?.items[0]?.sources[0]?.id).toBe(entry.id);
@@ -611,6 +617,39 @@ describe("M8 Invoice PDF and lifecycle", () => {
 
     const emptyDraft = await service.create(draftInput(own.client.id));
     expect(await service.void(emptyDraft.id)).toMatchObject({ status: "void", invoiceNumber: emptyDraft.invoiceNumber });
+  });
+
+  it("blocks deletion for Draft, Sent, and Paid source Time", async () => {
+    const own = await setupOwner(OWNER_A);
+    const timeService = new TimeEntryService(db, OWNER_A);
+    const entry = await timeService.create({ mode: "duration", workDate: "2026-09-05", durationSeconds: 3_600, clientId: own.client.id, projectId: own.project.id, taskId: null, description: "Protected source", billable: true });
+    const invoiceService = new InvoiceService(db, OWNER_A);
+    const invoice = await invoiceService.create(draftInput(own.client.id));
+    await invoiceService.importTime(invoice.id, { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entry.id], grouping: "individual" });
+    await expect(timeService.delete(entry.id)).rejects.toMatchObject({ code: "TIME_ENTRY_INVOICED", statusCode: 409 });
+    await invoiceService.markSent(invoice.id);
+    await expect(timeService.delete(entry.id)).rejects.toMatchObject({ code: "TIME_ENTRY_INVOICED", statusCode: 409 });
+    await invoiceService.markPaid(invoice.id, { paidAt: "2026-09-06" });
+    await expect(timeService.delete(entry.id)).rejects.toMatchObject({ code: "TIME_ENTRY_INVOICED", statusCode: 409 });
+    expect((await db.select().from(invoiceItemTimeEntries).where(eq(invoiceItemTimeEntries.timeEntryId, entry.id)))).toHaveLength(1);
+  });
+
+  it("keeps a Void Invoice readable after its released source becomes non-billable", async () => {
+    const own = await setupOwner(OWNER_A);
+    const timeService = new TimeEntryService(db, OWNER_A);
+    const entry = await timeService.create({ mode: "duration", workDate: "2026-09-05", durationSeconds: 3_600, clientId: own.client.id, projectId: own.project.id, taskId: null, description: "Billable source", billable: true });
+    const invoiceService = new InvoiceService(db, OWNER_A);
+    const invoice = await invoiceService.create(draftInput(own.client.id));
+    const imported = await invoiceService.importTime(invoice.id, { from: "2026-09-01", to: "2026-09-30", timeEntryIds: [entry.id], grouping: "individual" });
+    const savedPresentation = await invoiceService.presentation(invoice.id);
+    await invoiceService.void(invoice.id);
+
+    await timeService.update(entry.id, { mode: "duration", workDate: entry.workDate, durationSeconds: 3_600, clientId: own.client.id, projectId: own.project.id, taskId: null, description: "Corrected non-billable source", billable: false });
+    await expect(timeService.delete(entry.id)).rejects.toMatchObject({ code: "TIME_ENTRY_HAS_INVOICE_HISTORY", statusCode: 409 });
+    expect(await invoiceService.get(invoice.id)).toMatchObject({ status: "void", total: imported?.total, items: [{ amount: imported?.items[0]?.amount, sources: [{ description: "Corrected non-billable source", hourlyRate: null, currency: null, amount: null }] }] });
+    expect((await invoiceService.presentation(invoice.id))?.items).toEqual(savedPresentation?.items);
+    expect((await invoiceService.pdf(invoice.id))?.buffer.subarray(0, 5).toString()).toBe("%PDF-");
+    expect((await invoiceService.eligibleTimeForContext({ clientId: own.client.id, currency: "USD", from: "2026-09-01", to: "2026-09-30" })).entries).toHaveLength(0);
   });
 
   it("serializes concurrent Paid and Void terminal transitions and keeps Paid Time reserved", async () => {

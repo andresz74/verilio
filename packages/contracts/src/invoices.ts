@@ -58,7 +58,7 @@ export const InvoiceManualItemInputSchema = z.object({
 });
 export type InvoiceManualItemInput = z.infer<typeof InvoiceManualItemInputSchema>;
 
-export const InvoiceSourceTimeSchema = z.object({
+const invoiceSourceTimeFields = {
   id: IdSchema,
   workDate: DateOnlySchema,
   description: z.string(),
@@ -67,11 +67,22 @@ export const InvoiceSourceTimeSchema = z.object({
   taskId: IdSchema.nullable(),
   taskName: z.string().nullable(),
   durationSeconds: z.number().int().positive(),
+};
+
+export const InvoiceSourceTimeSchema = z.object({
+  ...invoiceSourceTimeFields,
   hourlyRate: NonNegativeDecimalStringSchema,
   currency: CurrencyCodeSchema,
   amount: DecimalStringSchema,
 });
 export type InvoiceSourceTime = z.infer<typeof InvoiceSourceTimeSchema>;
+
+export const InvoiceLinkedSourceTimeSchema = z.object({
+  ...invoiceSourceTimeFields,
+  hourlyRate: NonNegativeDecimalStringSchema.nullable(),
+  currency: CurrencyCodeSchema.nullable(),
+  amount: DecimalStringSchema.nullable(),
+});
 
 export const InvoiceItemDtoSchema = z.object({
   id: IdSchema,
@@ -81,7 +92,7 @@ export const InvoiceItemDtoSchema = z.object({
   unitPrice: NonNegativeDecimalStringSchema,
   amount: NonNegativeDecimalStringSchema,
   sortOrder: z.number().int().nonnegative(),
-  sources: z.array(InvoiceSourceTimeSchema),
+  sources: z.array(InvoiceLinkedSourceTimeSchema),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });

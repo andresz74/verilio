@@ -96,6 +96,7 @@ export const TimeEntryDtoSchema = z.object({
     id: IdSchema,
     invoiceNumber: z.string(),
   }).nullable(),
+  hasInvoiceHistory: z.boolean(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });

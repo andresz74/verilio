@@ -432,4 +432,21 @@ describe("Invoice pages", () => {
     expect(screen.getByLabelText("Issue date")).toBeDisabled();
     expect(screen.queryByRole("button", { name: "Mark Sent" })).not.toBeInTheDocument();
   });
+
+  it("distinguishes saved Void Invoice values from editable live source details", async () => {
+    const original = makeInvoice();
+    const source = original.items[0]!.sources[0]!;
+    const voided = makeInvoice({
+      status: "void",
+      displayStatus: "void",
+      items: [{ ...original.items[0]!, sources: [{ ...source, description: "Corrected after Void", hourlyRate: null, currency: null, amount: null }] }],
+    });
+    baseHandlers(voided);
+    const user = userEvent.setup();
+    renderInvoices(`/invoices/${invoiceId}`);
+    expect(await screen.findByText(/Source details reflect current Time records/)).toBeVisible();
+    expect(screen.getByText("EUR €170.00")).toBeVisible();
+    await user.click(screen.getByText("View 1 source entry"));
+    expect(screen.getByText(/Corrected after Void.*Current source is non-billable/)).toBeVisible();
+  });
 });

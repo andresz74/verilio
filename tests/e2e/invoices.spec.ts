@@ -194,6 +194,11 @@ test("Void preserves Invoice history, releases Time, and permits re-invoicing", 
   await expect(page.getByText(/Void is terminal/)).toBeVisible();
   await expect(page.getByText("View 1 source entry")).toBeVisible();
   await expect(page.getByRole("heading", { name: invoiceNumber })).toBeVisible();
+  await page.goto(`/timesheet?from=${workDate}&to=${workDate}`);
+  await expect(page.getByText("Not invoiced")).toBeVisible();
+  await expect(page.getByText("Kept for Invoice history")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0);
 
   const replacementId = await createInvoice(request, clientId, "USD", workDate);
   const released = await eligibleTime(request, replacementId, workDate, workDate);

@@ -591,9 +591,9 @@ The user must be able to delete a time entry with confirmation.
 
 ### Acceptance Criteria
 
-- Uninvoiced entries can be deleted.
-- Invoiced entries cannot be deleted through the ordinary delete flow.
-- The UI explains why an invoiced entry is protected.
+- Completed entries never linked to an Invoice can be deleted.
+- A Time Entry ever linked to any Invoice, including a Void Invoice, cannot be hard-deleted.
+- The UI explains active Invoice protection or retained Invoice history without labeling Void-only Time as currently Invoiced.
 
 ## FR-TME-005 — Duplicate Time Entry
 
@@ -1177,6 +1177,10 @@ A time entry linked to a non-void invoice must not be offered for import into an
 ## BR-INV-005 — Void Restores Eligibility
 
 Voiding an invoice must make its source time entries eligible for invoicing again.
+The Invoice Item/Time Entry links remain for history. Void-only source Time may be edited for
+correction and rebilling, but cannot be hard-deleted; non-Void links still block ordinary editing.
+This does not add source-Time snapshots: saved Invoice Items, totals, and PDF are the historical
+billing record, while live source details may change after Void.
 
 ## BR-INV-006 — Removing Entry From Draft
 
@@ -1534,7 +1538,8 @@ Archived entities remain visible where referenced historically.
 
 ## BR-ARC-003 — Time Entry Deletion
 
-Time entries may be hard-deleted only when they are not invoice-protected.
+Time entries may be hard-deleted only when they have never been linked to any Invoice. A Void
+Invoice releases its source Time for editing and re-invoicing, not deletion.
 
 ## BR-ARC-004 — Invoice Deletion
 

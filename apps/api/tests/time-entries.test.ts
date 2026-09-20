@@ -37,6 +37,7 @@ const entry: TimeEntryDto = {
   hourlyRate: null,
   currency: null,
   invoice: null,
+  hasInvoiceHistory: false,
   createdAt: "2026-09-05T14:00:00.000Z",
   updatedAt: "2026-09-05T14:00:00.000Z",
 };
@@ -109,6 +110,16 @@ describe("time-entry routes", () => {
     const response = await app.inject({ method: "POST", url: "/api/v1/timer/start", payload: startInput });
     expect(response.statusCode).toBe(409);
     expect(response.json()).toMatchObject({ error: { code: "TIMER_ALREADY_RUNNING" } });
+    await app.close();
+  });
+
+  it("returns a stable history conflict instead of a database error for Delete", async () => {
+    const timeEntryService = service();
+    vi.mocked(timeEntryService.delete).mockRejectedValue(new ApiError(409, "TIME_ENTRY_HAS_INVOICE_HISTORY", "This Time Entry is part of Invoice history and cannot be deleted."));
+    const app = buildApp({ db: {} as VerilioDatabase, logger: false, timeEntryService });
+    const response = await app.inject({ method: "DELETE", url: `/api/v1/time-entries/${entryId}` });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: { code: "TIME_ENTRY_HAS_INVOICE_HISTORY", message: "This Time Entry is part of Invoice history and cannot be deleted." } });
     await app.close();
   });
 });
