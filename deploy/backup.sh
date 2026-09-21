@@ -19,14 +19,30 @@ backup_root=${VERILIO_BACKUP_DIR:-/srv/verilio/backups}
 retention_days=${VERILIO_BACKUP_RETENTION_DAYS:-7}
 version=${1:-${VERILIO_VERSION:-unknown}}
 kind=${2:-daily}
+source_version=${VERILIO_BACKUP_SOURCE_VERSION:-$version}
+target_version=${VERILIO_BACKUP_TARGET_VERSION:-}
+source_api_image=${VERILIO_BACKUP_SOURCE_API_IMAGE:-}
+source_gateway_image=${VERILIO_BACKUP_SOURCE_GATEWAY_IMAGE:-}
 
 if [[ "$kind" != "daily" && "$kind" != "predeploy" ]]; then
   echo "Backup kind must be 'daily' or 'predeploy'." >&2
   exit 64
 fi
+if [[ ! "$source_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "Backup source version '$source_version' is not a safe release identifier." >&2
+  exit 64
+fi
+if [[ -n "$target_version" && ! "$target_version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "Backup target version '$target_version' is not a safe release identifier." >&2
+  exit 64
+fi
 
 timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-backup_name="verilio-${version}-${kind}-${timestamp}"
+if [[ "$kind" == "predeploy" && -n "$target_version" ]]; then
+  backup_name="verilio-${source_version}-to-${target_version}-predeploy-${timestamp}"
+else
+  backup_name="verilio-${source_version}-${kind}-${timestamp}"
+fi
 final_dir="$backup_root/$backup_name"
 working_dir="$backup_root/.${backup_name}.partial"
 compose=(docker compose --env-file "$env_file" -f "$compose_file")
@@ -67,7 +83,11 @@ dump_checksum=$(awk '$2 == "database.dump" { print $1 }' "$working_dir/checksums
 cat >"$working_dir/manifest.txt" <<EOF
 timestamp_utc=$timestamp
 backup_kind=$kind
-verilio_version=$version
+verilio_version=$source_version
+source_verilio_version=$source_version
+target_verilio_version=$target_version
+source_api_image=$source_api_image
+source_gateway_image=$source_gateway_image
 postgres_version=$postgres_version
 migration_count=$migration_count
 backup_filename=database.dump

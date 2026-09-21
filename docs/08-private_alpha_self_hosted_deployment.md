@@ -144,6 +144,7 @@ The Caddy runtime is also non-root and contains the built SPA.
 
 `test-release.sh` creates isolated secrets, networks, ports, and database volumes. It verifies:
 
+- release-provenance agreement and fail-before-mutation behavior;
 - production Compose validity and ordered startup;
 - PostgreSQL data checksums;
 - no API or database host exposure;
@@ -180,6 +181,7 @@ release/
         ├── restore-drill.sh
         ├── server-deploy.sh
         ├── smoke-test.sh
+        ├── verify-release-provenance.sh
         ├── verify-data.sh
         ├── verilio.env.example
         └── postgres/init-app-role.sh
@@ -212,12 +214,20 @@ sudo VERILIO_ENV_FILE=/etc/verilio/verilio.env /opt/verilio/current/deploy/serve
 
 `server-deploy.sh` uses `VERILIO_VERSION` to select both the image archive and image tags.
 Switching `/opt/verilio/current` alone does not update the env file; its version must match the
-release being deployed.
+release being deployed. The script does not rewrite a mismatched value automatically.
 
-The deployment script verifies every release checksum, loads the image archive with `docker load`,
-creates a pre-deployment backup when an existing PostgreSQL service is running, applies migrations,
-waits for readiness, and checks the loopback gateway. On first deployment there is no pre-existing
-database to back up.
+Before loading images or touching the running stack, `verify-release-provenance.sh` checks that the
+physical `verilio-<version>` directory, `VERILIO_VERSION`, release manifest, archive filename,
+archive image tags, pinned PostgreSQL image, and all release checksums agree. After `docker load`,
+it also compares the loaded image IDs with the checksummed manifest before backup,
+maintenance, or migration. A mismatch exits with a diagnostic while the running application stays
+untouched; loading an unused target image is the only possible side effect of a post-load image-ID
+failure.
+
+After preflight, the deployment script inspects the existing API and gateway image tags. It fails
+before maintenance if recognizable Verilio source versions disagree, creates a pre-deployment
+backup when PostgreSQL is already running, applies migrations, waits for readiness, and checks the
+loopback gateway. On first deployment there is no pre-existing database to back up.
 
 For an update:
 
@@ -290,10 +300,14 @@ sudo VERILIO_ENV_FILE=/etc/verilio/verilio.env \
 ```
 
 Each mode-0700 backup directory contains mode-0600 `database.dump`, `globals.sql`, `checksums.txt`,
-and manifest files. The manifest records timestamp, backup kind, PostgreSQL version, Verilio
-version, migration count, dump filename, and checksum. The globals dump is recovery metadata and
-may contain password hashes; it must be encrypted off-host and handled as sensitive. The manifest
-contains no credential.
+and manifest files. The manifest records timestamp, backup kind, PostgreSQL version, migration
+count, dump filename, checksum, and explicit source/target release provenance. A daily backup uses
+the active `VERILIO_VERSION` as `source_verilio_version` and leaves `target_verilio_version` empty.
+A pre-deployment backup records the inspected running source version and the selected deployment
+target separately; its directory name also identifies the source-to-target transition. The retained
+`verilio_version` manifest field is a backward-compatible alias for the source/database version,
+not the incoming target. The globals dump is recovery metadata and may contain password hashes; it
+must be encrypted off-host and handled as sensitive. The manifest contains no credential.
 
 Schedule that exact command once daily with a root-owned systemd timer or cron entry; `backup.sh`
 loads the version, backup directory, retention, and Compose project from the protected environment
@@ -348,7 +362,9 @@ exceptional recovery; do not blindly execute it over an initialized cluster.
 Every future release must classify its database change.
 
 **Compatible/additive migration:** point `/opt/verilio/current` back to the previous release, set
-`VERILIO_VERSION` to its loaded image tag, start that release, keep the forward migration, and run
+`VERILIO_VERSION` to that exact release, and invoke that release's `server-deploy.sh`. Rollback uses
+the same directory/env/manifest/archive preflight as a forward deployment; it proceeds only when
+the selected previous release is internally coherent. Keep the forward migration and run
 health/application smoke checks.
 
 **Incompatible or data-changing migration:** stop the application, preserve the upgraded volume,

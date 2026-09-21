@@ -15,6 +15,7 @@
     "dev:web": "pnpm --filter @verilio/web dev",
     "lint": "eslint . --max-warnings=0",
     "test": "pnpm -r --if-present test",
+    "test:deploy": "bash deploy/tests/release-provenance.test.sh",
     "test:e2e": "playwright test",
     "test:integration": "pnpm --filter @verilio/api test:integration",
     "typecheck": "pnpm -r --if-present typecheck"
