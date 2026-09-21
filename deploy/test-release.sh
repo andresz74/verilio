@@ -11,6 +11,8 @@ fi
 
 docker image inspect "verilio-api:$version" "verilio-gateway:$version" >/dev/null
 
+"$repo_root/deploy/tests/release-provenance.test.sh"
+
 suffix="${RANDOM}${RANDOM}"
 project="verilio-release-test-$suffix"
 volume="verilio_release_test_${suffix}"
