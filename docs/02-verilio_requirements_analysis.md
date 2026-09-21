@@ -730,6 +730,17 @@ Rate: $85/hour
 Amount: $212.50
 ```
 
+For Reports, each completed billable Time Entry has its amount rounded individually to the
+historical currency's supported minor-unit precision using Decimal `ROUND_HALF_UP`. Detailed
+rows display that rounded amount. Summary currency totals and Client/Project/Task group totals
+sum those same individually rounded entry amounts across the complete filtered dataset, so they
+reconcile with Detailed even when it is paginated. Non-billable entries contribute no monetary
+amount, and unlike currencies remain separate.
+
+This per-Time-entry Report rounding boundary is separate from Invoice line/grouping and total
+calculation rules. Reports do not redefine Invoice amounts, subtotals, discounts, tax, persisted
+totals, or PDF values.
+
 ---
 
 # 14. Timesheet Requirements

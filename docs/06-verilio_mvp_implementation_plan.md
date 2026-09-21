@@ -937,6 +937,11 @@ Return:
 - Hours by day.
 - Hours by project.
 
+For monetary values, calculate and currency-round each completed billable Time Entry first, then
+sum those rounded entry amounts for overall and grouped totals across the full filtered dataset.
+Summary must reconcile with Detailed across pagination. Keep currencies separate and keep this
+Report boundary independent from Invoice Item grouping and calculation rules.
+
 ## M6.3 — Detailed Report API
 
 Implement paginated:

@@ -1,4 +1,4 @@
-import type { ClientInput, ProjectInput } from "@verilio/contracts";
+import type { ClientInput, ProjectInput, ReportDetailedRow } from "@verilio/contracts";
 import {
   businessProfiles,
   clients,
@@ -8,6 +8,7 @@ import {
   timeEntries,
   users,
 } from "@verilio/db";
+import { sumMoney } from "@verilio/domain";
 import { inArray } from "drizzle-orm";
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -272,6 +273,148 @@ describe("M6 PostgreSQL reports", () => {
         groupBy: "client",
       }),
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("sums individually rounded Detailed amounts in Summary across groups, pages, and currencies", async () => {
+    await setupOwner(OWNER_A);
+    const clientService = new ClientService(db, OWNER_A);
+    const projectService = new ProjectService(db, OWNER_A);
+    const timeService = new TimeEntryService(db, OWNER_A);
+    const reportService = new ReportService(db, OWNER_A);
+
+    const usdClient = await clientService.create(clientInput("Rounding USD", "USD", "1.0000"));
+    const eurClient = await clientService.create(clientInput("Rounding EUR", "EUR", "1.0000"));
+    const projectA = await projectService.create(projectInput(usdClient.id, "Project A", "1.0000"));
+    const projectB = await projectService.create(projectInput(usdClient.id, "Project B", "1.0000"));
+    const euroProject = await projectService.create(projectInput(eurClient.id, "Euro Project", "1.0000"));
+
+    const createMinute = (input: {
+      billable?: boolean;
+      clientId: string;
+      description: string;
+      projectId: string;
+      workDate: string;
+    }) => timeService.create({
+      mode: "duration",
+      workDate: input.workDate,
+      durationSeconds: 60,
+      clientId: input.clientId,
+      projectId: input.projectId,
+      taskId: null,
+      description: input.description,
+      billable: input.billable ?? true,
+    });
+
+    await createMinute({ clientId: usdClient.id, projectId: projectA.id, workDate: "2026-09-10", description: "USD A1" });
+    await createMinute({ clientId: usdClient.id, projectId: projectA.id, workDate: "2026-09-10", description: "USD A2" });
+    await createMinute({ clientId: usdClient.id, projectId: projectB.id, workDate: "2026-09-10", description: "USD B1" });
+
+    const twoEntrySummary = await reportService.summary({
+      from: "2026-09-10",
+      to: "2026-09-10",
+      clientId: usdClient.id,
+      projectId: projectA.id,
+      billable: "billable",
+      invoiceStatus: "all",
+      groupBy: "project",
+    });
+    const twoEntryDetailed = await reportService.detailed({
+      from: "2026-09-10",
+      to: "2026-09-10",
+      clientId: usdClient.id,
+      projectId: projectA.id,
+      billable: "billable",
+      invoiceStatus: "all",
+      page: 1,
+      pageSize: 25,
+    });
+    expect(twoEntryDetailed.entries.map((entry) => entry.amount)).toEqual(["0.02", "0.02"]);
+    expect(twoEntrySummary.billableTotals).toEqual([{ currency: "USD", amount: "0.04" }]);
+
+    const threeEntrySummary = await reportService.summary({
+      from: "2026-09-10",
+      to: "2026-09-10",
+      billable: "all",
+      invoiceStatus: "all",
+      groupBy: "project",
+    });
+    expect(threeEntrySummary.billableTotals).toEqual([{ currency: "USD", amount: "0.06" }]);
+    expect(threeEntrySummary.groups.find((group) => group.key === projectA.id)?.billableTotals)
+      .toEqual([{ currency: "USD", amount: "0.04" }]);
+    expect(threeEntrySummary.groups.find((group) => group.key === projectB.id)?.billableTotals)
+      .toEqual([{ currency: "USD", amount: "0.02" }]);
+
+    await projectService.update(
+      projectB.id,
+      projectInput(usdClient.id, projectB.name, "2.0000"),
+    );
+    await createMinute({ clientId: usdClient.id, projectId: projectB.id, workDate: "2026-09-11", description: "USD B2 current rate" });
+    await createMinute({ clientId: eurClient.id, projectId: euroProject.id, workDate: "2026-09-11", description: "EUR 1" });
+    await createMinute({ clientId: eurClient.id, projectId: euroProject.id, workDate: "2026-09-11", description: "EUR 2" });
+    await createMinute({ billable: false, clientId: usdClient.id, projectId: projectA.id, workDate: "2026-09-11", description: "Non-billable" });
+
+    const summary = await reportService.summary({
+      from: "2026-09-10",
+      to: "2026-09-11",
+      billable: "all",
+      invoiceStatus: "all",
+      groupBy: "project",
+    });
+    expect(summary).toMatchObject({
+      totalTrackedSeconds: 420,
+      billableSeconds: 360,
+      nonBillableSeconds: 60,
+      billableTotals: [
+        { currency: "EUR", amount: "0.04" },
+        { currency: "USD", amount: "0.09" },
+      ],
+    });
+    expect(summary.groups.find((group) => group.key === projectA.id)?.billableTotals)
+      .toEqual([{ currency: "USD", amount: "0.04" }]);
+    expect(summary.groups.find((group) => group.key === projectB.id)?.billableTotals)
+      .toEqual([{ currency: "USD", amount: "0.05" }]);
+    expect(summary.groups.find((group) => group.key === euroProject.id)?.billableTotals)
+      .toEqual([{ currency: "EUR", amount: "0.04" }]);
+
+    const detailedEntries: ReportDetailedRow[] = [];
+    for (let page = 1; page <= 4; page += 1) {
+      const detailed = await reportService.detailed({
+        from: "2026-09-10",
+        to: "2026-09-11",
+        billable: "all",
+        invoiceStatus: "all",
+        page,
+        pageSize: 2,
+      });
+      detailedEntries.push(...detailed.entries);
+      expect(detailed).toMatchObject({ total: 7, totalPages: 4 });
+    }
+    expect(detailedEntries).toHaveLength(7);
+    expect(detailedEntries.filter((entry) => entry.billable).map((entry) => entry.amount))
+      .toEqual(expect.arrayContaining(["0.02", "0.02", "0.02", "0.03", "0.02", "0.02"]));
+    expect(detailedEntries.find((entry) => entry.description === "Non-billable")?.amount).toBeNull();
+    expect(new Set(
+      detailedEntries
+        .filter((entry) => entry.currency === "USD" && entry.billable)
+        .map((entry) => entry.hourlyRate),
+    )).toEqual(new Set(["1.0000", "2.0000"]));
+
+    for (const total of summary.billableTotals) {
+      const detailedAmounts = detailedEntries.flatMap((entry) =>
+        entry.currency === total.currency && entry.amount !== null ? [entry.amount] : [],
+      );
+      expect(sumMoney(detailedAmounts, total.currency)).toBe(total.amount);
+    }
+    for (const group of summary.groups) {
+      for (const total of group.billableTotals) {
+        const detailedAmounts = detailedEntries.flatMap((entry) =>
+          entry.projectId === group.key && entry.currency === total.currency && entry.amount !== null
+            ? [entry.amount]
+            : [],
+        );
+        expect(sumMoney(detailedAmounts, total.currency)).toBe(total.amount);
+      }
+    }
   });
 
   it("returns deterministic empty and paginated report results", async () => {

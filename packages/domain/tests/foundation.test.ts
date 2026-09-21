@@ -9,6 +9,7 @@ import {
   getCurrencyFractionDigits,
   isDateOnly,
   roundMoney,
+  sumMoney,
 } from "../src/index.js";
 
 describe("date-only values", () => {
@@ -69,6 +70,19 @@ describe("decimal-safe money", () => {
         hourlyRate: null,
       }),
     ).toBeNull();
+  });
+
+  it("sums individually rounded historical Report amounts", () => {
+    const amounts = [60, 60, 60].map((durationSeconds) =>
+      calculateHistoricalTimeAmount({
+        billable: true,
+        currency: "USD",
+        durationSeconds,
+        hourlyRate: "1.0000",
+      }),
+    );
+    expect(amounts).toEqual(["0.02", "0.02", "0.02"]);
+    expect(sumMoney(amounts as string[], "USD")).toBe("0.06");
   });
 
   it("rejects incomplete billable snapshots", () => {
