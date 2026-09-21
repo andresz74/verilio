@@ -1464,6 +1464,14 @@ Reports should be computed by the server/database.
 
 Do not load years of time entries and aggregate everything in the browser.
 
+Report monetary values use a per-Time-entry rounding boundary. For every completed billable
+entry, the server calculates `durationSeconds × historical hourlyRate` with the shared decimal
+money domain and rounds that entry amount to its historical currency's supported minor-unit
+precision. Detailed exposes that amount. Overall currency totals and Client/Project/Task group
+totals sum those individually rounded values across the full filtered result set, independent of
+Detailed pagination. This is intentionally distinct from Invoice grouping and line rounding;
+Invoice calculations remain governed by the persisted Invoice Item pipeline in section 52.
+
 ## Summary endpoint
 
 Returns:

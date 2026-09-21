@@ -9,7 +9,7 @@ import type {
 } from "@verilio/contracts";
 import type { VerilioDatabase } from "@verilio/db";
 import { clients, invoiceItems, invoiceItemTimeEntries, invoices, projects, tasks, timeEntries } from "@verilio/db";
-import { calculateHistoricalTimeAmount, roundMoney } from "@verilio/domain";
+import { calculateHistoricalTimeAmount, sumMoney } from "@verilio/domain";
 import {
   and,
   count,
@@ -57,7 +57,7 @@ export class ReportService implements ReportServiceContract {
     await this.validateHierarchy(input);
     const where = this.where(input);
     const group = groupDefinition(input.groupBy);
-    const [totalsRows, currencyRows, durationGroups, amountGroups, dayRows, projectRows] =
+    const [totalsRows, monetaryEntries, durationGroups, dayRows, projectRows] =
       await Promise.all([
         this.db
           .select({
@@ -69,13 +69,17 @@ export class ReportService implements ReportServiceContract {
           .where(where),
         this.db
           .select({
+            key: group.key,
+            durationSeconds: timeEntries.durationSeconds,
+            hourlyRate: timeEntries.hourlyRate,
             currency: timeEntries.currency,
-            rawAmount: sql<string>`sum(${timeEntries.durationSeconds}::numeric * ${timeEntries.hourlyRate} / 3600)`,
           })
           .from(timeEntries)
-          .where(and(where, eq(timeEntries.billable, true), isNotNull(timeEntries.currency)))
-          .groupBy(timeEntries.currency)
-          .orderBy(timeEntries.currency),
+          .innerJoin(clients, eq(timeEntries.clientId, clients.id))
+          .innerJoin(projects, eq(timeEntries.projectId, projects.id))
+          .leftJoin(tasks, eq(timeEntries.taskId, tasks.id))
+          .where(and(where, eq(timeEntries.billable, true)))
+          .orderBy(timeEntries.currency, group.key, timeEntries.id),
         this.db
           .select({
             key: group.key,
@@ -91,19 +95,6 @@ export class ReportService implements ReportServiceContract {
           .where(where)
           .groupBy(...group.dimensions)
           .orderBy(desc(sql`sum(${timeEntries.durationSeconds})`), group.label),
-        this.db
-          .select({
-            key: group.key,
-            currency: timeEntries.currency,
-            rawAmount: sql<string>`sum(${timeEntries.durationSeconds}::numeric * ${timeEntries.hourlyRate} / 3600)`,
-          })
-          .from(timeEntries)
-          .innerJoin(clients, eq(timeEntries.clientId, clients.id))
-          .innerJoin(projects, eq(timeEntries.projectId, projects.id))
-          .leftJoin(tasks, eq(timeEntries.taskId, tasks.id))
-          .where(and(where, eq(timeEntries.billable, true), isNotNull(timeEntries.currency)))
-          .groupBy(group.key, timeEntries.currency)
-          .orderBy(group.key, timeEntries.currency),
         this.db
           .select({
             workDate: timeEntries.workDate,
@@ -127,12 +118,25 @@ export class ReportService implements ReportServiceContract {
       ]);
 
     const totals = totalsRows[0] ?? { tracked: "0", billable: "0", nonBillable: "0" };
-    const amountRowsByGroup = new Map<string, Array<{ currency: string; amount: string }>>();
-    for (const row of amountGroups) {
-      if (!row.currency) continue;
-      const values = amountRowsByGroup.get(row.key) ?? [];
-      values.push({ currency: row.currency, amount: roundMoney(row.rawAmount, row.currency) });
-      amountRowsByGroup.set(row.key, values);
+    const amountsByCurrency = new Map<string, string[]>();
+    const amountsByGroup = new Map<string, Map<string, string[]>>();
+    for (const entry of monetaryEntries) {
+      if (entry.durationSeconds === null) {
+        throw new Error("Completed Report entry is missing its duration");
+      }
+      const amount = calculateHistoricalTimeAmount({
+        billable: true,
+        currency: entry.currency,
+        durationSeconds: entry.durationSeconds,
+        hourlyRate: entry.hourlyRate,
+      });
+      if (amount === null || entry.currency === null) {
+        throw new Error("Billable Report entry is missing its historical amount");
+      }
+      collectAmount(amountsByCurrency, entry.currency, amount);
+      const groupAmounts = amountsByGroup.get(entry.key) ?? new Map<string, string[]>();
+      collectAmount(groupAmounts, entry.currency, amount);
+      amountsByGroup.set(entry.key, groupAmounts);
     }
 
     return {
@@ -140,11 +144,7 @@ export class ReportService implements ReportServiceContract {
       totalTrackedSeconds: Number(totals.tracked),
       billableSeconds: Number(totals.billable),
       nonBillableSeconds: Number(totals.nonBillable),
-      billableTotals: currencyRows.flatMap((row) =>
-        row.currency
-          ? [{ currency: row.currency, amount: roundMoney(row.rawAmount, row.currency) }]
-          : [],
-      ),
+      billableTotals: sumAmountsByCurrency(amountsByCurrency),
       groupBy: input.groupBy,
       groups: durationGroups.map(
         (row): ReportGroupRow => ({
@@ -153,7 +153,7 @@ export class ReportService implements ReportServiceContract {
           secondaryLabel: row.secondaryLabel,
           trackedSeconds: Number(row.tracked),
           billableSeconds: Number(row.billable),
-          billableTotals: amountRowsByGroup.get(row.key) ?? [],
+          billableTotals: sumAmountsByCurrency(amountsByGroup.get(row.key)),
         }),
       ),
       hoursByDay: dayRows.map((row) => ({
@@ -315,6 +315,21 @@ export class ReportService implements ReportServiceContract {
       if (!task) throw invalidFilter("taskId", "Choose a task for the selected project.");
     }
   }
+}
+
+function collectAmount(amounts: Map<string, string[]>, currency: string, amount: string): void {
+  const values = amounts.get(currency) ?? [];
+  values.push(amount);
+  amounts.set(currency, values);
+}
+
+function sumAmountsByCurrency(
+  amounts: Map<string, string[]> | undefined,
+): Array<{ currency: string; amount: string }> {
+  if (!amounts) return [];
+  return [...amounts.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([currency, values]) => ({ currency, amount: sumMoney(values, currency) }));
 }
 
 function groupDefinition(groupBy: ReportGroupBy): GroupDefinition {
