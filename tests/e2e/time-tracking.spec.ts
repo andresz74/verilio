@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import type { RecentTimeEntriesResponse, TimeEntryResponse, TimerStateResponse } from "@verilio/contracts";
 
 test("tracks authoritative timer and manual time through the M4 exit gate", async ({ page, request }) => {
   const consoleProblems: string[] = [];
@@ -58,6 +59,9 @@ test("tracks authoritative timer and manual time through the M4 exit gate", asyn
   await runningRegion.getByRole("button", { name: "Stop" }).click();
   const timerEntry = page.locator("article").filter({ hasText: timerDescription });
   await expect(timerEntry).toContainText("135.00/hr");
+  const recentBeforeContinue = await (await request.get("/api/v1/time-entries/recent")).json() as RecentTimeEntriesResponse;
+  const source = recentBeforeContinue.entries.find((entry) => entry.description === timerDescription)!;
+  expect(source).toBeDefined();
 
   await page.goto("/projects");
   await projectRow.getByRole("button", { name: "Edit" }).click();
@@ -66,6 +70,24 @@ test("tracks authoritative timer and manual time through the M4 exit gate", asyn
   await dialog.getByRole("button", { name: "Save project" }).click();
   await page.goto("/timer");
   await expect(page.locator("article").filter({ hasText: timerDescription })).toContainText("135.00/hr");
+
+  // One keyboard action reuses work context, not the old rate or entry identity.
+  const continueButton = timerEntry.getByRole("button", { name: "Continue activity" });
+  await continueButton.focus();
+  await continueButton.press("Enter");
+  await expect(runningRegion).toContainText(timerDescription);
+  const continued = await (await request.get("/api/v1/timer/current")).json() as TimerStateResponse;
+  expect(continued.timer).toMatchObject({ description: source.description, clientId: source.clientId, projectId: source.projectId, taskId: source.taskId, billable: source.billable, hourlyRate: null, currency: null, invoice: null, hasInvoiceHistory: false });
+  expect(continued.timer?.id).not.toBe(source.id);
+  expect(continued.timer?.startAt).not.toBe(source.startAt);
+  await page.reload();
+  await expect(runningRegion).toContainText(timerDescription);
+  await runningRegion.getByRole("button", { name: "Stop" }).click();
+  await expect(page.locator("article").filter({ hasText: timerDescription })).toHaveCount(2);
+  const newEntry = await (await request.get(`/api/v1/time-entries/${continued.timer!.id}`)).json() as TimeEntryResponse;
+  expect(newEntry.entry.hourlyRate).toBe("200.0000");
+  const unchangedSource = await (await request.get(`/api/v1/time-entries/${source.id}`)).json() as TimeEntryResponse;
+  expect(unchangedSource.entry).toEqual(source);
 
   await page.getByRole("button", { name: /Add time/ }).click();
   dialog = page.getByRole("dialog", { name: "Add time manually" });

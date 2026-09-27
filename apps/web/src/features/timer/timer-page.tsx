@@ -12,10 +12,10 @@ import {
   TextInput,
 } from "@verilio/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clock3, Plus, Square } from "lucide-react";
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { Clock3, Play, Plus, Square } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Controller, useForm, useWatch } from "react-hook-form";
+import { Controller, useForm, useWatch, type UseFormReturn } from "react-hook-form";
 import { z } from "zod";
 
 import { PageHeader } from "../../app/app-shell.js";
@@ -33,6 +33,7 @@ import {
   timerKeys,
 } from "./time-entry-api.js";
 import { TimeEntryFormDialog } from "./time-entry-form-dialog.js";
+import { timeEntryToTimerStartContext } from "./timer-activity.js";
 import { formatDuration, formatHourlyRate, hierarchyLabel } from "./time-format.js";
 import {
   isUnconfirmedTimerFeedback,
@@ -51,15 +52,20 @@ const TimerFormSchema = z.object({
 type TimerFormValues = z.infer<typeof TimerFormSchema>;
 type TimerFeedback = { message: string; timerId?: string | null };
 type StartFeedback = { message: string; running?: boolean };
+type StartRequest = { input: TimerStartInput; source: "composer" | "recent" };
 
 export function TimerPage() {
   const queryClient = useQueryClient();
   const [manualOpen, setManualOpen] = useState(false);
   const [editing, setEditing] = useState<TimeEntryDto | null>(null);
   const [deleting, setDeleting] = useState<TimeEntryDto | null>(null);
-  const [pendingStart, setPendingStart] = useState<TimerStartInput | null>(null);
+  const [pendingStart, setPendingStart] = useState<StartRequest | null>(null);
   const [timerFeedback, setTimerFeedback] = useState<TimerFeedback | null>(null);
   const [startFeedback, setStartFeedback] = useState<StartFeedback | null>(null);
+  const form = useForm<TimerFormValues>({
+    defaultValues: { description: "", clientId: "", projectId: "", taskId: "", billable: true },
+    resolver: zodResolver(TimerFormSchema),
+  });
   const currentQuery = useQuery({ queryKey: timerKeys.current, queryFn: getCurrentTimer });
   const recentQuery = useQuery({ queryKey: timerKeys.recent, queryFn: getRecentTimeEntries });
   const settingsQuery = useQuery({ queryKey: ["settings"], queryFn: getSettings });
@@ -70,6 +76,51 @@ export function TimerPage() {
       setStartFeedback((feedback) => feedback && isUnconfirmedTimerFeedback(feedback.message) ? null : feedback);
     }
   };
+
+  const startMutation = useMutation({
+    mutationFn: ({ input }: StartRequest) => startTimer(input),
+    onMutate: () => {
+      setStartFeedback(null);
+      setTimerFeedback(null);
+    },
+    onSuccess: (response, request) => {
+      queryClient.setQueryData(timerKeys.current, response);
+      if (request.source === "composer") form.reset();
+    },
+    onError: async (error, request) => {
+      if (error instanceof TimeEntryApiError && error.code === "VALIDATION_ERROR") {
+        // Recent context is not the composer's form: explain its validation without
+        // changing the user's unrelated fields or silently dropping archived context.
+        const fieldErrors = error.fieldErrors ?? {};
+        setStartFeedback({ message: request.source === "recent"
+          ? [error.message, ...Object.values(fieldErrors).flat()].join(" ")
+          : error.message });
+        if (request.source === "composer") {
+          let focus = true;
+          for (const [field, messages] of Object.entries(fieldErrors)) {
+            if (!messages?.[0] || !["description", "clientId", "projectId", "taskId", "billable"].includes(field)) continue;
+            form.setError(field as keyof TimerFormValues, { type: "server", message: messages[0] }, { shouldFocus: focus });
+            focus = false;
+          }
+        }
+        return;
+      }
+      setStartFeedback({ message: TIMER_STATE_CHECKING_MESSAGE });
+      const result = await reconcileCurrentTimer(queryClient);
+      if (result.status === "unknown") {
+        setStartFeedback({ message: TIMER_STATE_UNKNOWN_MESSAGE });
+      } else if (result.state.timer) {
+        if (error instanceof TimeEntryApiError && error.code === "TIMER_ALREADY_RUNNING") {
+          setStartFeedback(null);
+          setPendingStart(request);
+        } else {
+          setStartFeedback({ message: "Timer state refreshed. A Timer is running.", running: true });
+        }
+      } else {
+        setStartFeedback({ message: "Timer start was not confirmed. No Timer is currently running.", running: false });
+      }
+    },
+  });
 
   const stopMutation = useMutation({
     mutationFn: stopTimer,
@@ -96,7 +147,7 @@ export function TimerPage() {
   });
 
   const replaceMutation = useMutation({
-    mutationFn: async (input: TimerStartInput) => {
+    mutationFn: async ({ input }: StartRequest) => {
       const stopped = await stopTimer();
       queryClient.setQueryData(timerKeys.current, { timer: null, serverNow: stopped.serverNow });
       void queryClient.invalidateQueries({ queryKey: timerKeys.recent });
@@ -109,7 +160,7 @@ export function TimerPage() {
       setPendingStart(null);
       setTimerFeedback(null);
     },
-    onError: async () => {
+    onError: async (_error, request) => {
       setTimerFeedback({ message: TIMER_STATE_CHECKING_MESSAGE });
       setPendingStart(null);
       const result = await reconcileCurrentTimer(queryClient);
@@ -120,15 +171,19 @@ export function TimerPage() {
         if (result.state.timer) {
           setTimerFeedback({ message: "Timer state refreshed. A Timer is running.", timerId: result.state.timer.id });
         } else {
-          setTimerFeedback({ message: "No Timer is currently running. Your new work is still in the form.", timerId: null });
+          setTimerFeedback({ message: request.source === "recent"
+            ? "No Timer is currently running. You can try Continue activity again."
+            : "No Timer is currently running. Your new work is still in the form.", timerId: null });
         }
       }
     },
   });
 
   const timezone = settingsQuery.data?.settings?.timezone ?? "UTC";
-  const checkingTimerState = currentQuery.isFetching || timerFeedback?.message === TIMER_STATE_CHECKING_MESSAGE;
+  const checkingTimerState = currentQuery.isFetching || timerFeedback?.message === TIMER_STATE_CHECKING_MESSAGE || startFeedback?.message === TIMER_STATE_CHECKING_MESSAGE;
   const timer = currentQuery.isError || checkingTimerState ? null : currentQuery.data?.timer ?? null;
+  const commandPending = startMutation.isPending || stopMutation.isPending || replaceMutation.isPending;
+  const startDisabled = currentQuery.isError || checkingTimerState || commandPending || Boolean(pendingStart);
 
   return (
     <main>
@@ -151,18 +206,20 @@ export function TimerPage() {
               </div>
               <div className="flex items-center gap-4">
                 <span className="text-3xl font-semibold tabular-nums"><ElapsedTime startAt={timer.startAt ?? currentQuery.data.serverNow} serverNow={currentQuery.data.serverNow} /></span>
-                <Button variant="secondary" disabled={stopMutation.isPending} onClick={() => stopMutation.mutate()}><Square aria-hidden="true" size={15} /> {stopMutation.isPending ? "Stopping…" : "Stop"}</Button>
+                <Button variant="secondary" disabled={commandPending} onClick={() => stopMutation.mutate()}><Square aria-hidden="true" size={15} /> {stopMutation.isPending ? "Stopping…" : "Stop"}</Button>
               </div>
             </div>
           </section>
         ) : null}
 
         <TimerComposer
+          form={form}
           running={Boolean(timer)}
           stateUnknown={currentQuery.isError || checkingTimerState || replaceMutation.isPending}
           startFeedback={startFeedback}
-          setStartFeedback={setStartFeedback}
-          onConflict={(input) => setPendingStart(input)}
+          startDisabled={startDisabled}
+          starting={startMutation.isPending}
+          onStart={(input) => startMutation.mutate({ input, source: "composer" })}
         />
 
         <section aria-labelledby="recent-time-heading" className="rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
@@ -174,7 +231,7 @@ export function TimerPage() {
               {recentQuery.data.entries.map((entry) => (
                 <article key={entry.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0"><h3 className="m-0 truncate text-sm font-semibold">{entry.description}</h3><p className="mb-0 mt-1 text-xs text-[var(--color-text-secondary)]">{entry.workDate} · {hierarchyLabel(entry)}</p><div className="mt-2 flex gap-2"><StatusBadge tone={entry.billable ? "success" : "neutral"}>{entry.billable ? `Billable · ${entry.hourlyRate ? formatHourlyRate(entry.hourlyRate) : "—"}/hr` : "Non-billable"}</StatusBadge><StatusBadge tone="neutral">{entry.mode}</StatusBadge></div></div>
-                  <div className="flex shrink-0 items-center gap-2"><strong className="mr-2 text-sm tabular-nums">{formatDuration(entry.durationSeconds)}</strong>{entry.invoice ? <Link className="inline-flex min-h-8 items-center px-2 text-sm font-semibold text-[var(--color-accent-active)] underline" to={`/invoices/${entry.invoice.id}`}>View {entry.invoice.invoiceNumber}</Link> : <><Button size="sm" variant="secondary" onClick={() => setEditing(entry)}>Edit</Button>{entry.hasInvoiceHistory ? <span className="text-xs text-[var(--color-text-muted)]">Kept for Invoice history</span> : <Button size="sm" variant="quiet" onClick={() => setDeleting(entry)}>Delete</Button>}</>}</div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2"><strong className="mr-2 text-sm tabular-nums">{formatDuration(entry.durationSeconds)}</strong><Button size="sm" variant="quiet" aria-label="Continue activity" disabled={startDisabled} onClick={() => startMutation.mutate({ input: timeEntryToTimerStartContext(entry), source: "recent" })}><Play aria-hidden="true" size={16} /> Continue</Button>{entry.invoice ? <Link className="inline-flex min-h-8 items-center px-2 text-sm font-semibold text-[var(--color-accent-active)] underline" to={`/invoices/${entry.invoice.id}`}>View {entry.invoice.invoiceNumber}</Link> : <><Button size="sm" variant="secondary" onClick={() => setEditing(entry)}>Edit</Button>{entry.hasInvoiceHistory ? <span className="text-xs text-[var(--color-text-muted)]">Kept for Invoice history</span> : <Button size="sm" variant="quiet" onClick={() => setDeleting(entry)}>Delete</Button>}</>}</div>
                 </article>
               ))}
             </div>
@@ -185,19 +242,15 @@ export function TimerPage() {
       {manualOpen ? <TimeEntryFormDialog entry={null} timezone={timezone} onOpenChange={setManualOpen} /> : null}
       {editing ? <TimeEntryFormDialog entry={editing} timezone={timezone} onOpenChange={(open) => { if (!open) setEditing(null); }} /> : null}
       {pendingStart ? (
-        <Dialog open onOpenChange={(open) => { if (!open) setPendingStart(null); }} title="A timer is already running" description="Keep the current timer, or stop it and start the work you just entered." footer={<><DialogClose asChild><Button variant="secondary">Keep current timer</Button></DialogClose><Button disabled={replaceMutation.isPending} onClick={() => replaceMutation.mutate(pendingStart)}>{replaceMutation.isPending ? "Switching…" : "Stop current and start this one"}</Button></>}><p className="m-0 text-sm text-[var(--color-text-secondary)]">Verilio will save the current entry before attempting the new start. If the second step fails, it will say so explicitly.</p></Dialog>
+        <Dialog open onOpenChange={(open) => { if (!open) setPendingStart(null); }} title="A timer is already running" description={pendingStart.source === "recent" ? "Keep the current timer, or stop it and continue the selected activity." : "Keep the current timer, or stop it and start the work you just entered."} footer={<><DialogClose asChild><Button variant="secondary">Keep current timer</Button></DialogClose><Button disabled={replaceMutation.isPending} onClick={() => replaceMutation.mutate(pendingStart)}>{replaceMutation.isPending ? "Switching…" : pendingStart.source === "recent" ? "Stop current and start this activity" : "Stop current and start this one"}</Button></>}><p className="m-0 text-sm text-[var(--color-text-secondary)]">Verilio will save the current entry before attempting the new start. If the second step fails, it will say so explicitly.</p></Dialog>
       ) : null}
       {deleting ? <DeleteTimeEntryDialog entry={deleting} onOpenChange={(open) => { if (!open) setDeleting(null); }} /> : null}
     </main>
   );
 }
 
-function TimerComposer({ running, stateUnknown, startFeedback, setStartFeedback, onConflict }: { running: boolean; stateUnknown: boolean; startFeedback: StartFeedback | null; setStartFeedback: Dispatch<SetStateAction<StartFeedback | null>>; onConflict: (input: TimerStartInput) => void }) {
-  const queryClient = useQueryClient();
-  const { control, formState: { errors }, handleSubmit, register, setError, setValue, reset } = useForm<TimerFormValues>({
-    defaultValues: { description: "", clientId: "", projectId: "", taskId: "", billable: true },
-    resolver: zodResolver(TimerFormSchema),
-  });
+function TimerComposer({ form, running, stateUnknown, startFeedback, startDisabled, starting, onStart }: { form: UseFormReturn<TimerFormValues>; running: boolean; stateUnknown: boolean; startFeedback: StartFeedback | null; startDisabled: boolean; starting: boolean; onStart: (input: TimerStartInput) => void }) {
+  const { control, formState: { errors }, handleSubmit, register, setValue } = form;
   const clientId = useWatch({ control, name: "clientId" });
   const projectId = useWatch({ control, name: "projectId" });
   const taskId = useWatch({ control, name: "taskId" });
@@ -212,44 +265,10 @@ function TimerComposer({ running, stateUnknown, startFeedback, setStartFeedback,
     queryFn: () => getProjects(projectQuery),
     enabled: Boolean(clientId),
   });
-  const mutation = useMutation({
-    mutationFn: (values: TimerFormValues) => startTimer({ ...values, taskId: values.taskId || null }),
-    onMutate: () => setStartFeedback(null),
-    onSuccess: (response) => {
-      queryClient.setQueryData(timerKeys.current, response);
-      reset();
-    },
-    onError: async (error, values) => {
-      if (error instanceof TimeEntryApiError && error.code === "VALIDATION_ERROR" && error.fieldErrors) {
-        setStartFeedback({ message: error.message });
-        let focus = true;
-        for (const [field, messages] of Object.entries(error.fieldErrors)) {
-          if (!messages?.[0] || !["description", "clientId", "projectId", "taskId", "billable"].includes(field)) continue;
-          setError(field as keyof TimerFormValues, { type: "server", message: messages[0] }, { shouldFocus: focus });
-          focus = false;
-        }
-        return;
-      }
-      setStartFeedback({ message: TIMER_STATE_CHECKING_MESSAGE });
-      const result = await reconcileCurrentTimer(queryClient);
-      if (result.status === "unknown") {
-        setStartFeedback({ message: TIMER_STATE_UNKNOWN_MESSAGE });
-      } else if (result.state.timer) {
-        if (error instanceof TimeEntryApiError && error.code === "TIMER_ALREADY_RUNNING") {
-          setStartFeedback(null);
-          onConflict({ ...values, taskId: values.taskId || null });
-        } else {
-          setStartFeedback({ message: "Timer state refreshed. A Timer is running.", running: true });
-        }
-      } else {
-        setStartFeedback({ message: "Timer start was not confirmed. No Timer is currently running.", running: false });
-      }
-    },
-  });
   return (
     <section aria-label={stateUnknown ? "Timer state unconfirmed" : running ? "Start something else" : "What are you working on?"} className="rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)] p-5">
       <div className="mb-5"><h2 id="timer-composer-heading" className="m-0 text-base font-semibold">{stateUnknown ? "Timer state unconfirmed" : running ? "Start something else" : "What are you working on?"}</h2>{running ? <p className="mb-0 mt-1 text-xs text-[var(--color-text-muted)]">Starting this will ask what to do with the current timer.</p> : null}</div>
-      <form noValidate className="grid gap-5" onSubmit={(event) => void handleSubmit((values) => mutation.mutate(values))(event)}>
+      <form noValidate className="grid gap-5" onSubmit={(event) => void handleSubmit((values) => onStart({ ...values, taskId: values.taskId || null }))(event)}>
         {startFeedback && !(stateUnknown && startFeedback.message === TIMER_STATE_UNKNOWN_MESSAGE) && (startFeedback.running === undefined || startFeedback.running === running) ? <InlineError>{startFeedback.message}</InlineError> : null}
         <Field htmlFor="timerDescription" label="Description" error={errors.description?.message}><TextInput id="timerDescription" autoFocus placeholder="What are you working on?" {...register("description")} /></Field>
         <HierarchySelects value={{ clientId, projectId, taskId }} onChange={(value) => {
@@ -266,7 +285,7 @@ function TimerComposer({ running, stateUnknown, startFeedback, setStartFeedback,
         {(errors.clientId || errors.projectId || errors.taskId) ? <p role="alert" className="m-0 text-xs text-[var(--color-danger-default)]">{errors.clientId?.message ?? errors.projectId?.message ?? errors.taskId?.message}</p> : null}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <Controller control={control} name="billable" render={({ field }) => <label className="flex items-center gap-3 text-sm font-medium"><Checkbox checked={field.value} onCheckedChange={(checked) => field.onChange(checked === true)} /> Billable</label>} />
-          <Button type="submit" disabled={mutation.isPending || stateUnknown}><Clock3 aria-hidden="true" size={16} /> {mutation.isPending ? "Starting…" : "Start"}</Button>
+          <Button type="submit" disabled={startDisabled}><Clock3 aria-hidden="true" size={16} /> {starting ? "Starting…" : "Start"}</Button>
         </div>
       </form>
     </section>
