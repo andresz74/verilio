@@ -1,4 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { TimeEntryDto, TimerStartInput } from "@verilio/contracts";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { HttpResponse, http } from "msw";
@@ -8,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { server } from "../../test/server.js";
 import { timerKeys } from "./time-entry-api.js";
 import { TimerPage } from "./timer-page.js";
+import { timeEntryToTimerStartContext } from "./timer-activity.js";
 
 const clientId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";
@@ -57,6 +59,159 @@ async function fillStartForm(user: ReturnType<typeof userEvent.setup>, descripti
   await user.selectOptions(await screen.findByLabelText("Project"), projectId);
   await user.selectOptions(await screen.findByLabelText("Task (optional)"), taskId);
 }
+
+const completed: TimeEntryDto = {
+  ...running,
+  mode: "timer",
+  description: "Previous activity",
+  endAt: "2026-09-05T15:00:00.000Z",
+  durationSeconds: 3_600,
+  hourlyRate: "32.0000",
+  currency: "EUR",
+};
+const serverNow = "2026-09-27T14:00:00.000Z";
+function continuedTimer(input: TimerStartInput): TimeEntryDto {
+  return { ...running, mode: "timer", ...input, id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", startAt: serverNow, workDate: "2026-09-27", createdAt: serverNow, updatedAt: serverNow };
+}
+function recentHandler(entry: TimeEntryDto = completed) {
+  handlers();
+  server.use(http.get("/api/v1/time-entries/recent", () => HttpResponse.json({ entries: [entry] })));
+}
+
+describe("Continue activity", () => {
+  it.each([
+    { name: "billable with Task", entry: completed },
+    { name: "non-billable without Task", entry: { ...completed, taskId: null, taskName: null, billable: false, hourlyRate: null, currency: null } },
+    { name: "active Invoice", entry: { ...completed, invoice: { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", invoiceNumber: "INV-42" }, hasInvoiceHistory: true } },
+    { name: "Void-only history", entry: { ...completed, hasInvoiceHistory: true } },
+  ])("starts from $name using only work context, leaving source and composer unchanged", async ({ entry }) => {
+    recentHandler(entry);
+    const original = structuredClone(entry);
+    const expected = { description: entry.description, clientId, projectId, taskId: entry.taskId, billable: entry.billable };
+    // Test before API schema stripping too: the mapper itself must exclude history.
+    expect(timeEntryToTimerStartContext(Object.freeze(entry))).toEqual(expected);
+    const starts: unknown[] = [];
+    server.use(http.post("/api/v1/timer/start", async ({ request }) => {
+      const input = await request.json() as TimerStartInput;
+      starts.push(input);
+      return HttpResponse.json({ timer: continuedTimer(input), serverNow }, { status: 201 });
+    }));
+    const user = userEvent.setup();
+    const { queryClient } = renderPage();
+    await user.type(screen.getByRole("textbox", { name: /Description/ }), "Unrelated composer work");
+    const button = await screen.findByRole("button", { name: "Continue activity" });
+    await waitFor(() => expect(button).toBeEnabled());
+    button.focus();
+    await user.keyboard("{Enter}");
+
+    expect(await screen.findByRole("region", { name: "Running timer" })).toHaveTextContent(entry.description);
+    expect(starts).toEqual([expected]);
+    expect(queryClient.getQueryData(timerKeys.current)).toMatchObject({ timer: { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", startAt: serverNow, workDate: "2026-09-27", hourlyRate: null, currency: null, invoice: null, hasInvoiceHistory: false } });
+    expect(queryClient.getQueryData(timerKeys.recent)).toEqual({ entries: [original] });
+    expect(entry).toEqual(original);
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Unrelated composer work");
+    expect(screen.getByRole("article")).toHaveTextContent(entry.description);
+  });
+
+  it.each(["keep", "replace", "lost start", "lost stop"] as const)("reuses the active Timer decision and recovery: %s", async (outcome) => {
+    recentHandler();
+    let currentTimer: TimeEntryDto | null = { ...running, mode: "timer" };
+    const starts: TimerStartInput[] = [];
+    let stops = 0;
+    server.use(
+      http.get("/api/v1/timer/current", () => HttpResponse.json({ timer: currentTimer, serverNow })),
+      http.post("/api/v1/timer/start", async ({ request }) => {
+        const input = await request.json() as TimerStartInput;
+        starts.push(input);
+        if (currentTimer) return HttpResponse.json({ error: { code: "TIMER_ALREADY_RUNNING", message: "A timer is already running.", fieldErrors: null, requestId: "test" } }, { status: 409 });
+        currentTimer = continuedTimer(input);
+        return outcome === "lost start" ? HttpResponse.error() : HttpResponse.json({ timer: currentTimer, serverNow }, { status: 201 });
+      }),
+      http.post("/api/v1/timer/stop", () => {
+        stops += 1;
+        currentTimer = null;
+        return outcome === "lost stop" ? HttpResponse.error() : HttpResponse.json({ entry: completed, serverNow });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("region", { name: "Running timer" });
+    await user.click(await screen.findByRole("button", { name: "Continue activity" }));
+    const dialog = await screen.findByRole("dialog", { name: "A timer is already running" });
+    expect(stops).toBe(0);
+    if (outcome === "keep") {
+      await user.click(within(dialog).getByRole("button", { name: "Keep current timer" }));
+      expect(screen.getByRole("region", { name: "Running timer" })).toHaveTextContent("Reliable timer");
+      expect(starts).toHaveLength(1);
+      expect(stops).toBe(0);
+      expect(screen.getByRole("button", { name: "Continue activity" })).toHaveFocus();
+    } else {
+      await user.click(within(dialog).getByRole("button", { name: "Stop current and start this activity" }));
+      if (outcome === "lost stop") {
+        expect(await screen.findByText("No Timer is currently running. You can try Continue activity again.")).toBeVisible();
+        expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
+        expect(starts).toHaveLength(1);
+      } else {
+        await waitFor(() => expect(screen.getByRole("region", { name: "Running timer" })).toHaveTextContent(completed.description));
+        expect(starts).toEqual([timeEntryToTimerStartContext(completed), timeEntryToTimerStartContext(completed)]);
+        if (outcome === "lost start") expect(await screen.findByText("Timer state refreshed. A Timer is running.")).toBeVisible();
+      }
+      expect(stops).toBe(1);
+    }
+  });
+
+  it.each(["committed", "uncommitted", "unknown"] as const)("reconciles an ambiguous Continue Start: %s", async (outcome) => {
+    recentHandler();
+    let currentTimer: TimeEntryDto | null = null;
+    let startCalls = 0;
+    let currentReads = 0;
+    server.use(
+      http.get("/api/v1/timer/current", () => {
+        currentReads += 1;
+        return outcome === "unknown" && startCalls > 0 ? HttpResponse.error() : HttpResponse.json({ timer: currentTimer, serverNow });
+      }),
+      http.post("/api/v1/timer/start", async ({ request }) => {
+        startCalls += 1;
+        if (outcome === "committed") currentTimer = continuedTimer(await request.json() as TimerStartInput);
+        return HttpResponse.error();
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.type(screen.getByRole("textbox", { name: /Description/ }), "Keep my draft");
+    await user.click(await screen.findByRole("button", { name: "Continue activity" }));
+    if (outcome === "committed") {
+      expect(await screen.findByRole("region", { name: "Running timer" })).toHaveTextContent(completed.description);
+    } else if (outcome === "uncommitted") {
+      expect(await screen.findByText("Timer start was not confirmed. No Timer is currently running.")).toBeVisible();
+    } else {
+      expect(await screen.findByText(/Timer state could not be confirmed/)).toBeVisible();
+      expect(screen.getByRole("button", { name: "Continue activity" })).toBeDisabled();
+      expect(screen.queryByText(/No Timer is currently running/)).not.toBeInTheDocument();
+    }
+    if (outcome !== "committed") expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
+    expect(currentReads).toBeGreaterThanOrEqual(2);
+    expect(startCalls).toBe(1);
+    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Keep my draft");
+  });
+
+  it.each(["clientId", "projectId", "taskId"] as const)("shows normal invalid/archived %s validation without changing context", async (field) => {
+    recentHandler();
+    const starts: unknown[] = [];
+    server.use(http.post("/api/v1/timer/start", async ({ request }) => {
+      starts.push(await request.json());
+      return HttpResponse.json({ error: { code: "VALIDATION_ERROR", message: "Review the highlighted time-entry fields.", fieldErrors: { [field]: ["This context is archived or unavailable for new work."] }, requestId: "test" } }, { status: 400 });
+    }));
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Continue activity" }));
+    expect(await screen.findByText(/This context is archived or unavailable for new work/)).toBeVisible();
+    expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
+    expect(starts).toEqual([timeEntryToTimerStartContext(completed)]);
+    expect(screen.getByRole("article")).toHaveTextContent(completed.description);
+    expect(screen.getByLabelText("Client")).toHaveValue("");
+  });
+});
 
 describe("TimerPage", () => {
   it("validates hierarchy, starts only after persistence, and preserves input on failure", async () => {

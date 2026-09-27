@@ -659,7 +659,20 @@ Copies:
 - Task.
 - Billable state.
 
-Then starts a brand-new running timer with a new start timestamp.
+Timer Recent exposes **Continue activity** on each completed entry. One action immediately
+attempts a brand-new Timer through the normal Start command; it does not prefill the composer
+and require another Start. The source entry and unrelated composer input remain unchanged.
+
+Do not copy the source ID, timestamps, duration, work date, historical rate/currency, monetary
+amount, Invoice association/history, or created/updated timestamps. The server supplies the new
+start/work date and resolves the new session's rate through the normal Stop flow. Description
+remains free-form work context; Task is a separate optional structured Project entity.
+
+Invoiced and Void-history entries may supply this context, but archived/invalid hierarchy still
+uses normal Start validation. An existing Timer uses the same Keep current / Stop current and
+start this activity decision. Uncertain Start/Stop outcomes use current-Timer reconciliation
+(sections 50.2–50.3), with no automatic command retry. This does not group Recent entries or add
+Continue to Timesheet.
 
 ---
 

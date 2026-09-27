@@ -1545,6 +1545,20 @@ After P0 is stable, implement in approximate value order:
 14. Tablet polish.
 15. Additional mobile polish.
 
+## Timer Recent Continue — P1 issue #13
+
+Completed Recent entries expose **Continue activity**: one action starts a new Timer using only
+description, Client, Project, optional Task, and billable state. Historical identity, timestamps,
+work date, duration, rate/currency snapshots, and Invoice state/history are excluded; the source
+entry is unchanged. Normal server Start/Stop determines the new timestamps and eventual rate.
+Description remains free-form text, distinct from a structured Task.
+
+Reuse the existing Start mutation, active-Timer replacement decision, and R2 authoritative
+reconciliation. Invoiced/Void-history sources are reusable; current hierarchy validation still
+applies. Cover context isolation, keyboard access, replacement, ambiguous outcomes, and historical
+rate independence. Timesheet Continue remains deferred. Repeated-activity grouping (#14) and
+Timer terminology refinement (#15) are separate, unimplemented slices.
+
 ---
 
 # 17. Explicitly Deferred P2 Work
