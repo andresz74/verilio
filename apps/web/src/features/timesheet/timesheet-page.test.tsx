@@ -97,6 +97,18 @@ function renderPage(initialEntry = "/timesheet?from=2026-09-01&to=2026-09-07") {
 }
 
 describe("TimesheetPage", () => {
+  it("keeps repeated activity sessions as individual entries with direct actions", async () => {
+    baseHandlers();
+    server.use(http.get("/api/v1/time-entries", () => HttpResponse.json(response([
+      rangeEntry, { ...rangeEntry, id: durationId },
+    ]))));
+    renderPage();
+    expect(await screen.findAllByText(rangeEntry.description)).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Edit" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Delete" })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /Show sessions/ })).not.toBeInTheDocument();
+  });
+
   it("defaults to a URL-backed current week", async () => {
     baseHandlers();
     server.use(http.get("/api/v1/time-entries", () => HttpResponse.json(response([]))));

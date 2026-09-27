@@ -424,7 +424,22 @@ The product must not create a second timer because the browser lost local UI sta
 
 # 7. Recent Time on Timer Screen
 
-The Timer screen should show a compact list of recent entries, likely grouped by date.
+The Timer screen shows a compact list of activity groups derived only from the existing ten-entry
+Recent response, not all-time history. Exact stored description, Client ID, Project ID, nullable
+Task ID, and billable state define each group; no fuzzy matching or additional text normalization.
+Group order follows the newest member's position in the API response (latest update/creation
+first), and expanded sessions retain that same response order.
+
+Multi-session groups show context, Billable/Non-billable, session count, summed completed duration,
+and **Continue activity** through the existing reuse flow. A keyboard-operable Show/Hide sessions
+button exposes individual dates, available start/end information, mode, duration, historical rate,
+Invoice link/history, and permitted Edit/Delete actions. Do not show a single historical rate or
+aggregate Invoice status for the group: those may differ between sessions.
+
+Single-session groups keep their direct actions without expansion. Editing or deleting one entry
+refreshes Recent and naturally regroups it. Underlying Time Entries remain independent; no group
+is persisted and there is no group Delete. The running Timer stays separate from completed counts
+and durations. Timesheet remains an individual-entry review surface with its existing date groups.
 
 The purpose is not to replace Timesheet. It is to enable rapid correction and reuse.
 
@@ -671,8 +686,9 @@ remains free-form work context; Task is a separate optional structured Project e
 Invoiced and Void-history entries may supply this context, but archived/invalid hierarchy still
 uses normal Start validation. An existing Timer uses the same Keep current / Stop current and
 start this activity decision. Uncertain Start/Stop outcomes use current-Timer reconciliation
-(sections 50.2–50.3), with no automatic command retry. This does not group Recent entries or add
-Continue to Timesheet.
+(sections 50.2–50.3), with no automatic command retry. Recent groups reuse the same Continue
+command with shared work context only, never a member's historical rate or Invoice state.
+Continue is not added to Timesheet.
 
 ---
 

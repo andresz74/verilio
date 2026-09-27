@@ -8,13 +8,11 @@ import {
   EmptyState,
   Field,
   InlineError,
-  StatusBadge,
   TextInput,
 } from "@verilio/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clock3, Play, Plus, Square } from "lucide-react";
+import { Clock3, Plus, Square } from "lucide-react";
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { Controller, useForm, useWatch, type UseFormReturn } from "react-hook-form";
 import { z } from "zod";
 
@@ -33,8 +31,9 @@ import {
   timerKeys,
 } from "./time-entry-api.js";
 import { TimeEntryFormDialog } from "./time-entry-form-dialog.js";
-import { timeEntryToTimerStartContext } from "./timer-activity.js";
-import { formatDuration, formatHourlyRate, hierarchyLabel } from "./time-format.js";
+import { groupRecentActivities, timeEntryToTimerStartContext } from "./timer-activity.js";
+import { RecentActivity } from "./recent-activity.js";
+import { hierarchyLabel } from "./time-format.js";
 import {
   isUnconfirmedTimerFeedback,
   reconcileCurrentTimer,
@@ -224,15 +223,14 @@ export function TimerPage() {
 
         <section aria-labelledby="recent-time-heading" className="rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
           <div className="flex items-center justify-between border-b border-[var(--color-border-default)] px-5 py-4">
-            <div><h2 id="recent-time-heading" className="m-0 text-base font-semibold">Recent time</h2><p className="mb-0 mt-1 text-xs text-[var(--color-text-muted)]">A compact correction view. Full history belongs in Timesheet.</p></div>
+            <div><h2 id="recent-time-heading" className="m-0 text-base font-semibold">Recent time</h2><p className="mb-0 mt-1 text-xs text-[var(--color-text-muted)]">Sessions from the 10 most recent entries. Full history belongs in Timesheet.</p></div>
           </div>
           {recentQuery.isPending ? <p className="p-5 text-sm text-[var(--color-text-secondary)]">Loading recent time…</p> : recentQuery.isError ? <div className="p-5"><InlineError>Recent time could not be loaded.</InlineError></div> : recentQuery.data.entries.length === 0 ? <div className="p-5"><EmptyState title="No completed time yet" description="Stop a timer or add time manually to see it here." /></div> : (
             <div className="divide-y divide-[var(--color-border-default)]">
-              {recentQuery.data.entries.map((entry) => (
-                <article key={entry.id} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0"><h3 className="m-0 truncate text-sm font-semibold">{entry.description}</h3><p className="mb-0 mt-1 text-xs text-[var(--color-text-secondary)]">{entry.workDate} · {hierarchyLabel(entry)}</p><div className="mt-2 flex gap-2"><StatusBadge tone={entry.billable ? "success" : "neutral"}>{entry.billable ? `Billable · ${entry.hourlyRate ? formatHourlyRate(entry.hourlyRate) : "—"}/hr` : "Non-billable"}</StatusBadge><StatusBadge tone="neutral">{entry.mode}</StatusBadge></div></div>
-                  <div className="flex shrink-0 flex-wrap items-center gap-2"><strong className="mr-2 text-sm tabular-nums">{formatDuration(entry.durationSeconds)}</strong><Button size="sm" variant="quiet" aria-label="Continue activity" disabled={startDisabled} onClick={() => startMutation.mutate({ input: timeEntryToTimerStartContext(entry), source: "recent" })}><Play aria-hidden="true" size={16} /> Continue</Button>{entry.invoice ? <Link className="inline-flex min-h-8 items-center px-2 text-sm font-semibold text-[var(--color-accent-active)] underline" to={`/invoices/${entry.invoice.id}`}>View {entry.invoice.invoiceNumber}</Link> : <><Button size="sm" variant="secondary" onClick={() => setEditing(entry)}>Edit</Button>{entry.hasInvoiceHistory ? <span className="text-xs text-[var(--color-text-muted)]">Kept for Invoice history</span> : <Button size="sm" variant="quiet" onClick={() => setDeleting(entry)}>Delete</Button>}</>}</div>
-                </article>
+              {groupRecentActivities(recentQuery.data.entries).map((group) => (
+                <RecentActivity key={group.key} group={group} timezone={timezone} startDisabled={startDisabled}
+                  onContinue={(entry) => startMutation.mutate({ input: timeEntryToTimerStartContext(entry), source: "recent" })}
+                  onEdit={setEditing} onDelete={setDeleting} />
               ))}
             </div>
           )}
