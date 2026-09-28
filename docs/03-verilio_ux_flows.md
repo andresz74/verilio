@@ -170,7 +170,7 @@ Settings
 When a timer is active, the application shell should show a compact indicator containing at least:
 
 ```text
-Description
+Activity text
 Elapsed time
 Stop action
 ```
@@ -244,12 +244,17 @@ User arrives at Timer with the newly created client/project available.
 
 # 6. Timer Flow
 
+On Timer, the free-form `description` field is presented as **Activity**: what the freelancer is
+working on. Task remains a separate optional structured Project Task. This is UI vocabulary only,
+not an Activity entity or a database/API/domain rename. Manual historical entry dialogs,
+Timesheet, Reports, and Invoice surfaces retain **Description**.
+
 # 6.1 Empty / Idle Timer
 
 The primary Timer view should contain:
 
 ```text
-Description
+Activity (placeholder: "What are you working on?")
 Client
 Project
 Task (optional)
@@ -258,7 +263,10 @@ Billable toggle
 [ Start ]
 ```
 
-The user should be able to type the description immediately.
+The section heading is **What are you working on?**; the visible and accessible field label is
+**Activity**, not just a placeholder. While another Timer runs, **Start something else** may
+remain the heading, with the same Activity label. `description`-keyed validation belongs to this
+field. The user should be able to type the activity immediately.
 
 ## Field Dependency
 
@@ -315,7 +323,7 @@ The timer becomes active.
 Display:
 
 ```text
-Description
+Activity text (primary title, without a redundant label)
 Client / Project / Task
 Billable
 Elapsed time
@@ -379,7 +387,7 @@ Save completed entry
    ↓
 Clear running state
    ↓
-Show completed entry in recent time list
+Show completed entry in Recent activities
 ```
 
 ## Success Feedback
@@ -422,7 +430,10 @@ The product must not create a second timer because the browser lost local UI sta
 
 ---
 
-# 7. Recent Time on Timer Screen
+# 7. Recent Activities on Timer Screen
+
+Use **Recent activities** as the section heading, with supporting copy:
+“Grouped from the 10 most recent completed entries. Full history belongs in Timesheet.”
 
 The Timer screen shows a compact list of activity groups derived only from the existing ten-entry
 Recent response, not all-time history. Exact stored description, Client ID, Project ID, nullable
@@ -446,7 +457,7 @@ The purpose is not to replace Timesheet. It is to enable rapid correction and re
 Suggested row information:
 
 ```text
-Description
+Activity text
 Client / Project / Task
 Start–End
 Duration
@@ -668,7 +679,7 @@ Recommended behavior:
 
 Copies:
 
-- Description.
+- Free-form `description` (presented as Activity on Timer).
 - Client.
 - Project.
 - Task.

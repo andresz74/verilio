@@ -54,7 +54,7 @@ function renderPage() {
 }
 
 async function fillStartForm(user: ReturnType<typeof userEvent.setup>, description: string) {
-  await user.type(screen.getByRole("textbox", { name: /Description/ }), description);
+  await user.type(screen.getByRole("textbox", { name: "Activity" }), description);
   await user.selectOptions(await screen.findByLabelText("Client"), clientId);
   await user.selectOptions(await screen.findByLabelText("Project"), projectId);
   await user.selectOptions(await screen.findByLabelText("Task (optional)"), taskId);
@@ -255,7 +255,7 @@ describe("Continue activity", () => {
     }));
     const user = userEvent.setup();
     const { queryClient } = renderPage();
-    await user.type(screen.getByRole("textbox", { name: /Description/ }), "Unrelated composer work");
+    await user.type(screen.getByRole("textbox", { name: "Activity" }), "Unrelated composer work");
     const button = await screen.findByRole("button", { name: "Continue activity" });
     await waitFor(() => expect(button).toBeEnabled());
     button.focus();
@@ -266,7 +266,7 @@ describe("Continue activity", () => {
     expect(queryClient.getQueryData(timerKeys.current)).toMatchObject({ timer: { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", startAt: serverNow, workDate: "2026-09-27", hourlyRate: null, currency: null, invoice: null, hasInvoiceHistory: false } });
     expect(queryClient.getQueryData(timerKeys.recent)).toEqual({ entries: [original] });
     expect(entry).toEqual(original);
-    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Unrelated composer work");
+    expect(screen.getByRole("textbox", { name: "Activity" })).toHaveValue("Unrelated composer work");
     expect(screen.getByRole("article")).toHaveTextContent(entry.description);
   });
 
@@ -335,7 +335,7 @@ describe("Continue activity", () => {
     );
     const user = userEvent.setup();
     renderPage();
-    await user.type(screen.getByRole("textbox", { name: /Description/ }), "Keep my draft");
+    await user.type(screen.getByRole("textbox", { name: "Activity" }), "Keep my draft");
     await user.click(await screen.findByRole("button", { name: "Continue activity" }));
     if (outcome === "committed") {
       expect(await screen.findByRole("region", { name: "Running timer" })).toHaveTextContent(completed.description);
@@ -349,7 +349,7 @@ describe("Continue activity", () => {
     if (outcome !== "committed") expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
     expect(currentReads).toBeGreaterThanOrEqual(2);
     expect(startCalls).toBe(1);
-    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Keep my draft");
+    expect(screen.getByRole("textbox", { name: "Activity" })).toHaveValue("Keep my draft");
   });
 
   it.each(["clientId", "projectId", "taskId"] as const)("shows normal invalid/archived %s validation without changing context", async (field) => {
@@ -371,6 +371,56 @@ describe("Continue activity", () => {
 });
 
 describe("TimerPage", () => {
+  it.each([false, true])("labels free-form Activity separately from Task (running: %s)", async (isRunning) => {
+    recentHandler();
+    server.use(http.get("/api/v1/timer/current", () => HttpResponse.json({ timer: isRunning ? running : null, serverNow })));
+    renderPage();
+    const composer = await screen.findByRole("region", { name: isRunning ? "Start something else" : "What are you working on?" });
+    const activity = within(composer).getByRole("textbox", { name: "Activity" });
+    expect(activity).toHaveAttribute("placeholder", "What are you working on?");
+    expect(activity).toHaveAttribute("name", "description");
+    expect(activity).not.toHaveAttribute("aria-label");
+    expect(within(composer).queryByRole("textbox", { name: "Description" })).not.toBeInTheDocument();
+    expect(within(composer).getByRole("combobox", { name: "Task (optional)" })).toBeVisible();
+    const recent = screen.getByRole("region", { name: "Recent activities" });
+    expect(within(recent).getByText("Grouped from the 10 most recent completed entries. Full history belongs in Timesheet.")).toBeVisible();
+    expect(await within(recent).findByRole("heading", { name: completed.description })).toBeVisible();
+    expect(within(recent).getByRole("button", { name: "Continue activity" })).toBeVisible();
+    if (isRunning) {
+      const active = screen.getByRole("region", { name: "Running timer" });
+      expect(within(active).getByRole("heading", { name: running.description })).toBeVisible();
+      expect(within(active).queryByText("Description")).not.toBeInTheDocument();
+    }
+  });
+
+  it("associates description-keyed server validation with Activity without renaming the payload", async () => {
+    handlers();
+    let payload: unknown;
+    server.use(http.post("/api/v1/timer/start", async ({ request }) => {
+      payload = await request.json();
+      return HttpResponse.json({ error: { code: "VALIDATION_ERROR", message: "Review the highlighted fields.", fieldErrors: { description: ["Use at most 1,000 characters."] }, requestId: "test" } }, { status: 400 });
+    }));
+    const user = userEvent.setup();
+    renderPage();
+    await fillStartForm(user, "Keep this work");
+    await user.click(screen.getByRole("button", { name: "Start" }));
+    expect(await screen.findByText("Use at most 1,000 characters.")).toBeVisible();
+    const activity = screen.getByRole("textbox", { name: "Activity" });
+    expect(activity).toHaveAccessibleDescription("Use at most 1,000 characters.");
+    expect(activity).toHaveAttribute("aria-invalid", "true");
+    expect(activity).toHaveFocus();
+    expect(activity).toHaveValue("Keep this work");
+    expect(payload).toEqual({ description: "Keep this work", clientId, projectId, taskId, billable: true });
+  });
+
+  it("uses Recent activities wording while loading and on failure", async () => {
+    handlers();
+    server.use(http.get("/api/v1/time-entries/recent", () => HttpResponse.error()));
+    renderPage();
+    expect(screen.getByText("Loading recent activities…")).toBeVisible();
+    expect(await screen.findByText("Recent activities could not be loaded.")).toBeVisible();
+  });
+
   it("validates hierarchy, starts only after persistence, and preserves input on failure", async () => {
     handlers();
     const user = userEvent.setup();
@@ -383,13 +433,13 @@ describe("TimerPage", () => {
     renderPage();
     await user.click(await screen.findByRole("button", { name: "Start" }));
     expect(await screen.findByText("Client is required")).toBeVisible();
-    await user.type(screen.getByRole("textbox", { name: /Description/ }), "Reliable timer");
+    await user.type(screen.getByRole("textbox", { name: "Activity" }), "Reliable timer");
     await user.selectOptions(await screen.findByLabelText("Client"), clientId);
     await user.selectOptions(await screen.findByLabelText("Project"), projectId);
     await user.selectOptions(await screen.findByLabelText("Task (optional)"), taskId);
     await user.click(screen.getByRole("button", { name: "Start" }));
     expect(await screen.findByText(/No Timer is currently running/)).toBeVisible();
-    expect(screen.getAllByRole("textbox", { name: /Description/ })[0]).toHaveValue("Reliable timer");
+    expect(screen.getAllByRole("textbox", { name: "Activity" })[0]).toHaveValue("Reliable timer");
     shouldFail = false;
     await user.click(screen.getByRole("button", { name: "Start" }));
     expect(await screen.findByRole("heading", { name: "Reliable timer" })).toBeVisible();
@@ -430,7 +480,7 @@ describe("TimerPage", () => {
     await user.click(screen.getByRole("button", { name: "Start" }));
 
     expect(await screen.findByRole("heading", { name: "Interrupted start" })).toBeVisible();
-    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Interrupted start");
+    expect(screen.getByRole("textbox", { name: "Activity" })).toHaveValue("Interrupted start");
     expect(screen.getByText("Timer state refreshed. A Timer is running.")).toBeVisible();
     expect(screen.queryByText(/No new time is being recorded/)).not.toBeInTheDocument();
     expect(currentReads).toBeGreaterThanOrEqual(2);
@@ -446,7 +496,7 @@ describe("TimerPage", () => {
     await user.click(screen.getByRole("button", { name: "Start" }));
 
     expect(await screen.findByText("Timer start was not confirmed. No Timer is currently running.")).toBeVisible();
-    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Retry this work");
+    expect(screen.getByRole("textbox", { name: "Activity" })).toHaveValue("Retry this work");
     expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
   });
 
@@ -468,7 +518,7 @@ describe("TimerPage", () => {
     await user.click(screen.getByRole("button", { name: "Start" }));
 
     expect(await screen.findByText(/Timer state could not be confirmed/)).toBeVisible();
-    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Unconfirmed start");
+    expect(screen.getByRole("textbox", { name: "Activity" })).toHaveValue("Unconfirmed start");
     expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
     expect(screen.queryByText(/No Timer is currently running/)).not.toBeInTheDocument();
 
@@ -477,7 +527,7 @@ describe("TimerPage", () => {
     expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Retry status check" }));
     await waitFor(() => expect(screen.queryByText(/Timer state could not be confirmed/)).not.toBeInTheDocument());
-    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Unconfirmed start");
+    expect(screen.getByRole("textbox", { name: "Activity" })).toHaveValue("Unconfirmed start");
     expect(screen.getByRole("button", { name: "Start" })).toBeEnabled();
     expect(screen.getByRole("region", { name: "What are you working on?" })).toBeVisible();
     expect(screen.queryByRole("region", { name: "Running timer" })).not.toBeInTheDocument();
@@ -502,7 +552,7 @@ describe("TimerPage", () => {
     const dialog = await screen.findByRole("dialog", { name: "A timer is already running" });
     await user.click(within(dialog).getByRole("button", { name: "Keep current timer" }));
     expect(within(await screen.findByRole("region", { name: "Running timer" })).getByRole("heading", { name: "Reliable timer" })).toBeVisible();
-    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Work from this tab");
+    expect(screen.getByRole("textbox", { name: "Activity" })).toHaveValue("Work from this tab");
   });
 
   it("recovers a committed Stop whose response is lost and refreshes Recent time", async () => {
@@ -625,7 +675,7 @@ describe("TimerPage", () => {
 
     expect(await screen.findByRole("heading", { name: "Replacement work" })).toBeVisible();
     expect(screen.getByText("Timer state refreshed. A Timer is running.")).toBeVisible();
-    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Replacement work");
+    expect(screen.getByRole("textbox", { name: "Activity" })).toHaveValue("Replacement work");
     expect(startCalls).toBe(2);
   });
 
@@ -652,7 +702,7 @@ describe("TimerPage", () => {
     await user.click(within(dialog).getByRole("button", { name: "Stop current and start this one" }));
 
     expect(await screen.findByText("No Timer is currently running. Your new work is still in the form.")).toBeVisible();
-    expect(screen.getByRole("textbox", { name: /Description/ })).toHaveValue("Preserved replacement");
+    expect(screen.getByRole("textbox", { name: "Activity" })).toHaveValue("Preserved replacement");
     expect(startCalls).toBe(1);
   });
 
@@ -721,6 +771,7 @@ describe("TimerPage", () => {
     renderPage();
     await user.click(screen.getByRole("button", { name: /Add time/ }));
     const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByRole("textbox", { name: "Activity" })).not.toBeInTheDocument();
     await user.clear(within(dialog).getByRole("textbox", { name: /Description/ }));
     await user.type(within(dialog).getByRole("textbox", { name: /Description/ }), "Night shift");
     await user.selectOptions(within(dialog).getByLabelText("Client"), clientId);

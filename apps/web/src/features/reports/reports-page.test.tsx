@@ -159,6 +159,8 @@ describe("ReportsPage", () => {
     const user = userEvent.setup();
     renderReports("/reports/detailed?from=2026-09-01&to=2026-09-07");
     const table = await screen.findByRole("table");
+    expect(within(table).getByRole("columnheader", { name: "Description" })).toBeVisible();
+    expect(within(table).queryByRole("columnheader", { name: "Activity" })).not.toBeInTheDocument();
     expect(within(table).getByRole("cell", { name: "Historical work" })).toBeVisible();
     expect(within(table).getByText("USD $85.00/hr")).toBeVisible();
     expect(within(table).getByText("USD $170.00")).toBeVisible();

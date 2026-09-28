@@ -573,7 +573,7 @@ Because the timer should survive navigation, the interface should provide persis
 Show a compact running indicator in the shell containing:
 
 - Running label/icon.
-- Current description, truncated.
+- Current activity text (`description`), truncated.
 - Elapsed duration.
 - Link/action back to Timer.
 
@@ -887,6 +887,7 @@ The Timer is the highest-frequency interaction in Verilio.
 Recommended structure:
 
 ```text
+Activity
 [ What are you working on?                         ]
 [ Client ] [ Project ] [ Task ] [ Billable ] [ START ]
 ```
@@ -900,7 +901,7 @@ Running state should be unmistakable.
 Display:
 
 - Running indicator.
-- Description.
+- Activity text as the primary title, without a redundant label.
 - Client/project/task.
 - Elapsed duration with tabular numerals.
 - Stop action.
@@ -1905,7 +1906,7 @@ Before a feature is considered visually complete, confirm:
 Design priority:
 
 ```text
-Description → Client/Project/Task → Billable → Start/Stop
+Activity → Client/Project/Task → Billable → Start/Stop
 ```
 
 The elapsed timer is the dominant state when running.

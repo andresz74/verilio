@@ -441,7 +441,7 @@ This rule is explicitly supported by the PRD.
 
 The timer form must support:
 
-- Description.
+- Activity (visible label for the free-form `description` field).
 - Client.
 - Project.
 - Optional task.
@@ -462,7 +462,7 @@ The timer form must support:
 
 While running, display:
 
-- Description.
+- Activity text as the primary title.
 - Client.
 - Project.
 - Task, if present.

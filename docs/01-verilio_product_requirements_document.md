@@ -431,7 +431,7 @@ The user must be able to create time through two methods:
 
 The timer form should support:
 
-- Description.
+- Activity (the free-form `description` field; placeholder: "What are you working on?").
 - Client.
 - Project.
 - Optional task.
@@ -441,7 +441,7 @@ The timer form should support:
 
 While running, display:
 
-- Description.
+- Activity text as the primary title.
 - Client / project / task.
 - Elapsed duration.
 - Running state.
@@ -1136,7 +1136,7 @@ Open application
 
 ```text
 Open Timer
-→ Enter description
+→ Enter Activity
 → Select client
 → Select project
 → Optionally select task
