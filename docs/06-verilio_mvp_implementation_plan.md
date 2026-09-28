@@ -1556,8 +1556,23 @@ Description remains free-form text, distinct from a structured Task.
 Reuse the existing Start mutation, active-Timer replacement decision, and R2 authoritative
 reconciliation. Invoiced/Void-history sources are reusable; current hierarchy validation still
 applies. Cover context isolation, keyboard access, replacement, ambiguous outcomes, and historical
-rate independence. Timesheet Continue remains deferred. Repeated-activity grouping (#14) and
-Timer terminology refinement (#15) are separate, unimplemented slices.
+rate independence. Timesheet Continue remains deferred. Timer terminology refinement (#15) is a
+separate, unimplemented slice.
+
+## Timer Recent Activity Groups — P1 issue #14
+
+Derive frontend-only groups from the bounded Recent response using exact stored description,
+Client ID, Project ID, nullable Task ID, and billable state. Preserve API order by first occurrence
+and member order. Sum only completed integer durations and count only loaded completed sessions;
+keep the running Timer separate. No entity, API, schema, or persisted membership is introduced.
+
+Single sessions retain direct actions. Multi-session groups show count/duration, context and
+billable state, reuse #13 Continue, and expand with keyboard-accessible buttons to individual
+dates/timestamps, modes, rates, Invoice/history state and permitted Edit/Delete actions. Rates and
+Invoice states stay per-session, never misleading group aggregates. Existing query invalidation
+after Edit/Delete drives regrouping. Cover identity differences, order, duration, rate/history
+variance, expansion, Continue, correction, and narrow-screen reachability. Timesheet remains
+ungrouped by activity; Reports and #15 terminology are unchanged.
 
 ---
 

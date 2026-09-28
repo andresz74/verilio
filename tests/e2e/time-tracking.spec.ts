@@ -83,11 +83,31 @@ test("tracks authoritative timer and manual time through the M4 exit gate", asyn
   await page.reload();
   await expect(runningRegion).toContainText(timerDescription);
   await runningRegion.getByRole("button", { name: "Stop" }).click();
-  await expect(page.locator("article").filter({ hasText: timerDescription })).toHaveCount(2);
+  await expect(timerEntry).toHaveCount(1);
+  await expect(timerEntry).toContainText("2 sessions");
+  const expand = timerEntry.getByRole("button", { name: `Show sessions for ${timerDescription}` });
+  await expand.focus();
+  await expand.press("Enter");
+  await expect(timerEntry.getByRole("button", { name: `Hide sessions for ${timerDescription}` })).toHaveAttribute("aria-expanded", "true");
+  await expect(timerEntry.getByRole("listitem")).toHaveCount(2);
+  await expect(timerEntry.getByText("Billable · 135.00/hr")).toBeVisible();
+  await expect(timerEntry.getByText("Billable · 200.00/hr")).toBeVisible();
   const newEntry = await (await request.get(`/api/v1/time-entries/${continued.timer!.id}`)).json() as TimeEntryResponse;
   expect(newEntry.entry.hourlyRate).toBe("200.0000");
   const unchangedSource = await (await request.get(`/api/v1/time-entries/${source.id}`)).json() as TimeEntryResponse;
   expect(unchangedSource.entry).toEqual(source);
+
+  // Group Continue stays reachable on narrow screens and excludes the live session.
+  await page.setViewportSize({ width: 375, height: 812 });
+  await expect(timerEntry.getByRole("button", { name: "Continue activity" })).toBeVisible();
+  await expect(page.getByRole("button", { name: `Hide sessions for ${timerDescription}` })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await timerEntry.getByRole("button", { name: "Continue activity" }).click();
+  await expect(runningRegion).toContainText(timerDescription);
+  await expect(timerEntry).toContainText("2 sessions");
+  await runningRegion.getByRole("button", { name: "Stop" }).click();
+  await expect(timerEntry).toContainText("3 sessions");
+  await page.setViewportSize({ width: 1280, height: 720 });
 
   await page.getByRole("button", { name: /Add time/ }).click();
   dialog = page.getByRole("dialog", { name: "Add time manually" });

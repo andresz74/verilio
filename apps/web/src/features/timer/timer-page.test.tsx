@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { server } from "../../test/server.js";
 import { timerKeys } from "./time-entry-api.js";
 import { TimerPage } from "./timer-page.js";
-import { timeEntryToTimerStartContext } from "./timer-activity.js";
+import { groupRecentActivities, timeEntryToTimerStartContext } from "./timer-activity.js";
 
 const clientId = "11111111-1111-4111-8111-111111111111";
 const projectId = "22222222-2222-4222-8222-222222222222";
@@ -77,6 +77,163 @@ function recentHandler(entry: TimeEntryDto = completed) {
   handlers();
   server.use(http.get("/api/v1/time-entries/recent", () => HttpResponse.json({ entries: [entry] })));
 }
+
+describe("Recent activity grouping", () => {
+  it.each([
+    { clientId: "55555555-5555-4555-8555-555555555555" },
+    { projectId: "55555555-5555-4555-8555-555555555555" },
+    { taskId: "55555555-5555-4555-8555-555555555555" },
+    { taskId: null },
+    { billable: false },
+    { description: "previous activity" },
+    { description: "Previous activity " },
+  ])("keeps exact identity differences separate: %j", (different) => {
+    expect(groupRecentActivities([completed, { ...completed, ...different }])).toHaveLength(2);
+  });
+
+  it("preserves response order, sums integer seconds, excludes unfinished entries, and leaves DTOs unchanged", () => {
+    const entries: TimeEntryDto[] = [
+      { ...completed, id: "new-b", description: "Z work", durationSeconds: 3_601, hourlyRate: "85.0000" },
+      { ...completed, id: "new-a", description: "A work", taskId: null, durationSeconds: 61 },
+      { ...completed, id: "old-b", description: "Z work", durationSeconds: 3_659, currency: "USD", hourlyRate: "125.0000" },
+      { ...completed, id: "old-a", description: "A work", taskId: null, durationSeconds: 62 },
+      { ...completed, id: "duration-b", description: "Z work", mode: "duration", startAt: null, endAt: null, durationSeconds: 240 },
+      { ...completed, id: "running-b", description: "Z work", endAt: null, durationSeconds: null },
+      { ...completed, id: "unfinished-b", description: "Z work", endAt: null },
+    ];
+    const original = structuredClone(entries);
+    const groups = groupRecentActivities(entries);
+    expect(groups.map((group) => group.entries.map((entry) => entry.id))).toEqual([["new-b", "old-b", "duration-b"], ["new-a", "old-a"]]);
+    expect(groups.map((group) => group.durationSeconds)).toEqual([7_500, 123]);
+    expect(groups.every((group) => Number.isSafeInteger(group.durationSeconds))).toBe(true);
+    expect(entries).toEqual(original);
+    expect(groupRecentActivities([])).toEqual([]);
+  });
+
+  const sessions: TimeEntryDto[] = [
+    { ...completed, durationSeconds: 3_600 },
+    { ...completed, id: "55555555-5555-4555-8555-555555555555", workDate: "2026-09-04", startAt: "2026-09-04T23:00:00.000Z", endAt: "2026-09-05T05:00:00.000Z", durationSeconds: 7_200, hourlyRate: "50.0000", currency: "USD", invoice: { id: "66666666-6666-4666-8666-666666666666", invoiceNumber: "INV-7" }, hasInvoiceHistory: true },
+    { ...completed, id: "77777777-7777-4777-8777-777777777777", workDate: "2026-09-03", mode: "duration", startAt: null, endAt: null, durationSeconds: 4_200, hourlyRate: "85.0000", hasInvoiceHistory: true },
+  ];
+  function groupedHandlers() {
+    handlers();
+    server.use(http.get("/api/v1/time-entries/recent", () => HttpResponse.json({ entries: sessions })));
+  }
+
+  it("expands/collapses by keyboard and preserves ordered per-session rates and mixed Invoice/history actions", async () => {
+    groupedHandlers();
+    server.use(http.get("/api/v1/timer/current", () => HttpResponse.json({ timer: { ...running, description: completed.description }, serverNow })));
+    const user = userEvent.setup();
+    renderPage();
+    expect(await screen.findByText("3 sessions · 4h 10m")).toBeVisible();
+    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Running timer" })).toBeVisible();
+    const expand = screen.getByRole("button", { name: "Show sessions for Previous activity" });
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("list", { name: "Sessions for Previous activity" })).not.toBeInTheDocument();
+    expect(screen.getByText("Billable · 32.00/hr")).not.toBeVisible();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expand.focus();
+    await user.keyboard("{Enter}");
+    expect(expand).toHaveAttribute("aria-expanded", "true");
+    const list = screen.getByRole("list", { name: "Sessions for Previous activity" });
+    expect(list.id).toBe(expand.getAttribute("aria-controls"));
+    const rows = within(list).getAllByRole("listitem");
+    expect(rows.map((row) => row.textContent?.slice(0, 10))).toEqual(["2026-09-05", "2026-09-04", "2026-09-03"]);
+    expect(within(rows[0]!).getByText("Billable · 32.00/hr")).toBeVisible();
+    expect(within(rows[0]!).getByText("Not invoiced")).toBeVisible();
+    expect(within(rows[0]!).getByRole("button", { name: "Edit" })).toBeVisible();
+    expect(within(rows[0]!).getByRole("button", { name: "Delete" })).toBeVisible();
+    expect(rows[1]).toHaveTextContent("19:00–2026-09-05 01:00");
+    expect(within(rows[1]!).getByText("Billable · 50.00/hr")).toBeVisible();
+    expect(within(rows[1]!).getByRole("link", { name: "View INV-7" })).toHaveAttribute("href", "/invoices/66666666-6666-4666-8666-666666666666");
+    expect(within(rows[1]!).queryByRole("button")).not.toBeInTheDocument();
+    expect(rows[2]).toHaveTextContent("Duration only");
+    expect(within(rows[2]!).getByText("Billable · 85.00/hr")).toBeVisible();
+    expect(within(rows[2]!).getByText("Not invoiced")).toBeVisible();
+    expect(within(rows[2]!).getByText("Kept for Invoice history")).toBeVisible();
+    expect(within(rows[2]!).getByRole("button", { name: "Edit" })).toBeVisible();
+    expect(within(rows[2]!).queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    await user.keyboard(" ");
+    expect(expand).toHaveAttribute("aria-expanded", "false");
+    expect(list).not.toBeVisible();
+  });
+
+  it("continues a collapsed group through #13 without copying a member's rate or Invoice history", async () => {
+    groupedHandlers();
+    let payload: unknown;
+    server.use(http.post("/api/v1/timer/start", async ({ request }) => {
+      payload = await request.json();
+      return HttpResponse.json({ timer: continuedTimer(payload as TimerStartInput), serverNow }, { status: 201 });
+    }));
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Continue activity" }));
+    expect(await screen.findByRole("region", { name: "Running timer" })).toHaveTextContent(completed.description);
+    expect(payload).toEqual(timeEntryToTimerStartContext(completed));
+    expect(screen.getByText("3 sessions · 4h 10m")).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Continue activity" })).toHaveLength(1);
+  });
+
+  it("regroups an individually edited session from refreshed Recent data", async () => {
+    groupedHandlers();
+    let entries = sessions.map((entry) => ({ ...entry }));
+    server.use(
+      http.get("/api/v1/time-entries/recent", () => HttpResponse.json({ entries })),
+      http.patch(`/api/v1/time-entries/${entryId}`, async ({ request }) => {
+        const input = await request.json() as { description: string };
+        entries = entries.map((entry) => entry.id === entryId ? { ...entry, description: input.description } : entry);
+        return HttpResponse.json({ entry: entries[0] });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Show sessions for Previous activity" }));
+    const first = screen.getAllByRole("listitem")[0]!;
+    await user.click(within(first).getByRole("button", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit time entry" });
+    await user.clear(within(dialog).getByRole("textbox", { name: /Description/ }));
+    await user.type(within(dialog).getByRole("textbox", { name: /Description/ }), "Different work");
+    await user.click(within(dialog).getByRole("button", { name: "Save entry" }));
+    expect(await screen.findByRole("heading", { name: "Different work" })).toBeVisible();
+    expect(screen.getByText("2 sessions · 3h 10m")).toBeVisible();
+    expect(screen.getAllByRole("article")).toHaveLength(2);
+    const single = screen.getByRole("heading", { name: "Different work" }).closest("article")!;
+    expect(within(single).getByRole("button", { name: "Edit" })).toBeVisible();
+    expect(within(single).getByRole("button", { name: "Delete" })).toBeVisible();
+    expect(within(single).queryByRole("button", { name: /sessions/ })).not.toBeInTheDocument();
+  });
+
+  it("updates count/duration after individual Delete, then renders a single session and removes the empty group", async () => {
+    groupedHandlers();
+    let entries = sessions.map((entry) => ({ ...entry, invoice: null, hasInvoiceHistory: false }));
+    const deleted: string[] = [];
+    server.use(
+      http.get("/api/v1/time-entries/recent", () => HttpResponse.json({ entries })),
+      http.delete("/api/v1/time-entries/:id", ({ params }) => {
+        deleted.push(String(params.id));
+        entries = entries.filter((entry) => entry.id !== params.id);
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    await user.click(await screen.findByRole("button", { name: "Show sessions for Previous activity" }));
+    for (const expectedCount of [2, 1, 0]) {
+      await user.click(screen.getAllByRole("button", { name: "Delete" })[0]!);
+      await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete permanently" }));
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      if (expectedCount === 2) expect(await screen.findByText("2 sessions · 3h 10m")).toBeVisible();
+      if (expectedCount === 1) {
+        await waitFor(() => expect(screen.queryByRole("button", { name: /sessions/ })).not.toBeInTheDocument());
+        expect(screen.getByText("1h 10m")).toBeVisible();
+        expect(screen.getByRole("button", { name: "Edit" })).toBeVisible();
+      }
+      if (expectedCount === 0) expect(await screen.findByText("No completed time yet")).toBeVisible();
+    }
+    expect(deleted).toEqual(sessions.map((entry) => entry.id));
+  });
+});
 
 describe("Continue activity", () => {
   it.each([
