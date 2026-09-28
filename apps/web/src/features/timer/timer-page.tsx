@@ -223,9 +223,9 @@ export function TimerPage() {
 
         <section aria-labelledby="recent-time-heading" className="rounded-[var(--radius-lg)] border border-[var(--color-border-default)] bg-[var(--color-bg-surface)]">
           <div className="flex items-center justify-between border-b border-[var(--color-border-default)] px-5 py-4">
-            <div><h2 id="recent-time-heading" className="m-0 text-base font-semibold">Recent time</h2><p className="mb-0 mt-1 text-xs text-[var(--color-text-muted)]">Sessions from the 10 most recent entries. Full history belongs in Timesheet.</p></div>
+            <div><h2 id="recent-time-heading" className="m-0 text-base font-semibold">Recent activities</h2><p className="mb-0 mt-1 text-xs text-[var(--color-text-muted)]">Grouped from the 10 most recent completed entries. Full history belongs in Timesheet.</p></div>
           </div>
-          {recentQuery.isPending ? <p className="p-5 text-sm text-[var(--color-text-secondary)]">Loading recent time…</p> : recentQuery.isError ? <div className="p-5"><InlineError>Recent time could not be loaded.</InlineError></div> : recentQuery.data.entries.length === 0 ? <div className="p-5"><EmptyState title="No completed time yet" description="Stop a timer or add time manually to see it here." /></div> : (
+          {recentQuery.isPending ? <p className="p-5 text-sm text-[var(--color-text-secondary)]">Loading recent activities…</p> : recentQuery.isError ? <div className="p-5"><InlineError>Recent activities could not be loaded.</InlineError></div> : recentQuery.data.entries.length === 0 ? <div className="p-5"><EmptyState title="No completed time yet" description="Stop a timer or add time manually to see it here." /></div> : (
             <div className="divide-y divide-[var(--color-border-default)]">
               {groupRecentActivities(recentQuery.data.entries).map((group) => (
                 <RecentActivity key={group.key} group={group} timezone={timezone} startDisabled={startDisabled}
@@ -268,7 +268,7 @@ function TimerComposer({ form, running, stateUnknown, startFeedback, startDisabl
       <div className="mb-5"><h2 id="timer-composer-heading" className="m-0 text-base font-semibold">{stateUnknown ? "Timer state unconfirmed" : running ? "Start something else" : "What are you working on?"}</h2>{running ? <p className="mb-0 mt-1 text-xs text-[var(--color-text-muted)]">Starting this will ask what to do with the current timer.</p> : null}</div>
       <form noValidate className="grid gap-5" onSubmit={(event) => void handleSubmit((values) => onStart({ ...values, taskId: values.taskId || null }))(event)}>
         {startFeedback && !(stateUnknown && startFeedback.message === TIMER_STATE_UNKNOWN_MESSAGE) && (startFeedback.running === undefined || startFeedback.running === running) ? <InlineError>{startFeedback.message}</InlineError> : null}
-        <Field htmlFor="timerDescription" label="Description" error={errors.description?.message}><TextInput id="timerDescription" autoFocus placeholder="What are you working on?" {...register("description")} /></Field>
+        <Field htmlFor="timerDescription" label="Activity" error={errors.description?.message}><TextInput id="timerDescription" autoFocus placeholder="What are you working on?" aria-invalid={Boolean(errors.description)} aria-describedby={errors.description ? "timerDescription-error" : undefined} {...register("description")} /></Field>
         <HierarchySelects value={{ clientId, projectId, taskId }} onChange={(value) => {
           if (value.projectId && value.projectId !== projectId) {
             const project = projectsQuery.data?.projects.find(

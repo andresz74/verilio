@@ -41,7 +41,9 @@ test("tracks authoritative timer and manual time through the M4 exit gate", asyn
 
   await page.goto("/timer");
   const composer = page.getByRole("region", { name: "What are you working on?" });
-  await composer.getByRole("textbox", { name: "Description" }).fill(timerDescription);
+  await expect(composer.getByRole("textbox", { name: "Activity", exact: true })).toHaveAttribute("placeholder", "What are you working on?");
+  await composer.getByRole("textbox", { name: "Activity", exact: true }).fill(timerDescription);
+  await expect(page.getByRole("heading", { name: "Recent activities", exact: true })).toBeVisible();
   await composer.getByRole("combobox", { name: "Client" }).selectOption({ label: `${clientName} — USD` });
   await composer.getByRole("combobox", { name: "Project" }).selectOption({ label: projectName });
   await composer.getByRole("combobox", { name: "Task (optional)" }).selectOption({ label: taskName });

@@ -79,7 +79,7 @@ test("completes the canonical private MVP loop with historical and billing integ
 
   await page.goto("/timer");
   const composer = page.getByRole("region", { name: "What are you working on?" });
-  await composer.getByLabel("Description").fill(timerDescription);
+  await composer.getByLabel("Activity", { exact: true }).fill(timerDescription);
   await composer.getByRole("combobox", { name: "Client" }).selectOption({ label: `${clientName} — USD` });
   await composer.getByRole("combobox", { name: "Project" }).selectOption({ label: projectName });
   await composer.getByRole("combobox", { name: "Task (optional)" }).selectOption({ label: taskName });

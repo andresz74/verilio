@@ -185,12 +185,15 @@ describe("TimesheetPage", () => {
 
     await user.click(await screen.findByRole("button", { name: "Add time" }));
     expect(await screen.findByRole("dialog", { name: "Add time manually" })).toBeVisible();
+    expect(within(screen.getByRole("dialog")).getByRole("textbox", { name: "Description" })).toBeVisible();
+    expect(within(screen.getByRole("dialog")).queryByRole("textbox", { name: "Activity" })).not.toBeInTheDocument();
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
 
     const edit = screen.getByRole("button", { name: "Edit" });
     edit.focus();
     await user.keyboard("{Enter}");
     const editDialog = await screen.findByRole("dialog", { name: "Edit time entry" });
+    expect(within(editDialog).getByRole("textbox", { name: "Description" })).toBeVisible();
     fireEvent.change(within(editDialog).getByLabelText(/Work date/), { target: { value: "2026-09-03" } });
     await user.click(within(editDialog).getByRole("button", { name: "Save entry" }));
     expect(await screen.findByRole("heading", { name: /Thursday, September 3/ })).toBeVisible();

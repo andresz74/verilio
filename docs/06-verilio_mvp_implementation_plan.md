@@ -762,7 +762,7 @@ Server:
 
 ## M4.7 — Timer Composer
 
-Implement description, Client, Project, optional Task, Billable, and Start.
+Implement Activity (the `description` field), Client, Project, optional Task, Billable, and Start.
 
 ## M4.8 — Running Timer UI
 
@@ -1556,8 +1556,8 @@ Description remains free-form text, distinct from a structured Task.
 Reuse the existing Start mutation, active-Timer replacement decision, and R2 authoritative
 reconciliation. Invoiced/Void-history sources are reusable; current hierarchy validation still
 applies. Cover context isolation, keyboard access, replacement, ambiguous outcomes, and historical
-rate independence. Timesheet Continue remains deferred. Timer terminology refinement (#15) is a
-separate, unimplemented slice.
+rate independence. Timesheet Continue remains deferred. Timer terminology is specified in #15
+below without changing this reuse behavior.
 
 ## Timer Recent Activity Groups — P1 issue #14
 
@@ -1572,7 +1572,25 @@ dates/timestamps, modes, rates, Invoice/history state and permitted Edit/Delete 
 Invoice states stay per-session, never misleading group aggregates. Existing query invalidation
 after Edit/Delete drives regrouping. Cover identity differences, order, duration, rate/history
 variance, expansion, Continue, correction, and narrow-screen reachability. Timesheet remains
-ungrouped by activity; Reports and #15 terminology are unchanged.
+ungrouped by activity; Reports is unchanged. Timer terminology is specified in #15 below.
+
+## Timer Activity Terminology — P1 issue #15
+
+Present the Timer composer's free-form `description` as **Activity**, with placeholder and idle
+heading **What are you working on?**. Keep **Start something else** while another Timer runs,
+and keep **Task (optional)** as a distinct structured Project Task selector. The running Timer
+uses the activity text as its primary title without adding a redundant label.
+
+Use **Recent activities** with “Grouped from the 10 most recent completed entries. Full history
+belongs in Timesheet.” Keep **Continue activity**, **sessions**, and Show/Hide sessions wording.
+These are Timer presentation terms, not an Activity entity or internal field rename; the
+API/domain/database field and validation key remain `description`. Associate errors accessibly
+with Activity. Preserve #13 Continue, #14 grouping, and R2 recovery behavior.
+
+Test visible/accessibility labels in idle and running composers, Task distinction, validation
+association, Recent wording, and unchanged Continue/group controls. Manual historical entry
+dialogs, Timesheet, Reports, and Invoice surfaces retain **Description**; only Timer-composer E2E
+selectors change to Activity.
 
 ---
 

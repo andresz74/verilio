@@ -63,7 +63,7 @@ export async function getRecentTimeEntries(): Promise<RecentTimeEntriesResponse>
   return request(
     "/api/v1/time-entries/recent?limit=10",
     RecentTimeEntriesResponseSchema,
-    "Recent time could not be loaded.",
+    "Recent activities could not be loaded.",
   );
 }
 
