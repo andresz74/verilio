@@ -259,7 +259,11 @@ reset_fake_state "$case_dir/docker.log"
 export FAKE_SOURCE_API_IMAGE=verilio-api:v0.1.1-alpha.1
 export FAKE_SOURCE_GATEWAY_IMAGE=verilio-gateway:v0.1.1-alpha.1
 export FAKE_POSTGRES_RUNNING=true
+old_daily="$case_dir/backups/verilio-v0.1.1-alpha.0-daily-20200101T000000Z"
+mkdir "$old_daily"
+touch -t 202001010000 "$old_daily"
 VERILIO_ENV_FILE="$env_file" "$release_dir/deploy/server-deploy.sh" >/dev/null
+[[ -d "$old_daily" ]] || fail "predeploy unexpectedly expired an existing daily backup"
 backup_manifest=$(find "$case_dir/backups" -name manifest.txt -print -quit)
 [[ -n "$backup_manifest" ]] || fail "predeploy backup manifest was not created"
 assert_contains "$(cat "$backup_manifest")" "backup_kind=predeploy"
@@ -346,7 +350,11 @@ create_fixture "$case_dir" v0.1.1-alpha.2
 release_dir=$FIXTURE_RELEASE_DIR
 env_file=$FIXTURE_ENV_FILE
 reset_fake_state "$case_dir/docker.log"
+old_daily="$case_dir/backups/verilio-v0.1.1-alpha.0-daily-20200101T000000Z"
+mkdir "$old_daily"
+touch -t 202001010000 "$old_daily"
 backup_dir=$(VERILIO_ENV_FILE="$env_file" "$release_dir/deploy/backup.sh")
+[[ ! -d "$old_daily" ]] || fail "daily backup stopped applying its retention policy"
 assert_contains "$(cat "$backup_dir/manifest.txt")" "backup_kind=daily"
 assert_contains "$(cat "$backup_dir/manifest.txt")" "verilio_version=v0.1.1-alpha.2"
 assert_contains "$(cat "$backup_dir/manifest.txt")" "source_verilio_version=v0.1.1-alpha.2"

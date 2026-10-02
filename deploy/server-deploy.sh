@@ -58,13 +58,14 @@ if "${compose[@]}" ps --status running postgres | grep -q postgres; then
   if [[ "$source_version" == "none" ]]; then
     source_version=unknown
   fi
-  VERILIO_BACKUP_SOURCE_VERSION="$source_version" \
+  predeploy_backup=$(VERILIO_BACKUP_SOURCE_VERSION="$source_version" \
   VERILIO_BACKUP_TARGET_VERSION="$VERILIO_VERSION" \
   VERILIO_BACKUP_SOURCE_API_IMAGE="$source_api_image" \
   VERILIO_BACKUP_SOURCE_GATEWAY_IMAGE="$source_gateway_image" \
   VERILIO_COMPOSE_FILE="$compose_file" \
   VERILIO_ENV_FILE="$env_file" \
-    "$release_dir/deploy/backup.sh" "$source_version" predeploy >/dev/null
+    "$release_dir/deploy/backup.sh" "$source_version" predeploy)
+  echo "Predeploy backup: $predeploy_backup"
 
   # Enter a short maintenance window before migrations so the old application
   # cannot write against a schema that is being upgraded.
