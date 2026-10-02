@@ -3,8 +3,9 @@
 ## 1. Scope and safety boundary
 
 This runbook deploys the fixed-local-owner Verilio MVP to a private Samsung NC110 running
-Ubuntu Server 24.04.3 LTS. The host is runtime-only; release images are built and tested on the
-development computer through OrbStack.
+Ubuntu Server 24.04.3 LTS. Official tagged releases are built and tested off-host on the
+development computer through OrbStack. The NC110 can additionally build commit-addressed
+`main-<sha>` snapshots for private-alpha dogfooding (section 15); snapshots are not official releases.
 
 > **Private deployment only:** this Verilio build is intended for trusted private-network or
 > tailnet access. Do not expose it as an unauthenticated public Internet application. Use
@@ -20,7 +21,7 @@ Personal device
       │ private HTTPS
       ▼
 Tailscale Serve on the NC110 host
-      │ http://127.0.0.1:8080
+      │ http://127.0.0.1:<VERILIO_GATEWAY_PORT>
       ▼
 Caddy gateway container
   ├── /          → immutable React assets
@@ -38,7 +39,8 @@ Long-running Compose services: `gateway`, `api`, and `postgres`.
 
 One-shot Compose service: `migrate`. It uses the API image and exits after applying the
 checked-in migrations. The API and PostgreSQL have no published host ports. Caddy publishes only
-`127.0.0.1:8080` by default.
+`127.0.0.1:<VERILIO_GATEWAY_PORT>` on the host, mapped to container port `8080`.
+The host-port default is `8080`, but commands must read the configured value rather than assume it.
 
 ## 3. NC110 host preparation
 
@@ -159,8 +161,9 @@ The Caddy runtime is also non-root and contains the built SPA.
 
 The script removes both disposable stacks and volumes. It does not need a Tailscale account.
 
-For local validation of uncommitted deployment work only, `VERILIO_ALLOW_UNRELEASED_BUILD=true`
-may bypass the clean-tag requirement. Never use that override for an actual alpha release.
+For local deployment-tool validation and the explicit snapshot workflow in section 15,
+`VERILIO_ALLOW_UNRELEASED_BUILD=true` may bypass the clean-tag requirement. Never use that override
+for an official tagged alpha release. Official builds still require a clean tree and a matching tag.
 
 ## 6. Release artifact and transfer
 
@@ -188,7 +191,8 @@ release/
 ```
 
 The image archive contains the versioned API and gateway images plus the pinned PostgreSQL image.
-The NC110 therefore needs no registry, source checkout, Node.js, pnpm, Vite, or image build.
+For this official-release path, the NC110 needs no registry, source checkout, Node.js, pnpm, Vite,
+or image build. The optional snapshot path needs Git and Docker buildx, not a host Node/pnpm toolchain.
 
 Transfer the outer archive and checksum using `scp`, `rsync`, removable media, or another trusted
 private channel. On the NC110:
@@ -239,7 +243,8 @@ For an update:
 6. Verify the UI, current Timer state, Reports, an Invoice, and PDF generation.
 7. Retain the previous release and pre-deployment backup through the rollback window.
 
-Use a short maintenance window for migrations. Do not run source builds on the NC110.
+Use a short maintenance window for migrations. Official release builds remain off-host; only the
+explicit snapshot workflow below builds source on the NC110.
 
 If deployment reports a missing archive for a previous release, compare:
 
@@ -256,11 +261,21 @@ The symlink, env value, and manifest must identify the same release version.
 Install Tailscale on Ubuntu using its official instructions, then interactively join the intended
 tailnet. Do not commit or script a reusable auth key.
 
-With the Caddy gateway healthy on loopback:
+Read only `VERILIO_GATEWAY_PORT` from the production env (do not source the entire file).
+Require exactly one plain numeric TCP port in the range 1–65535; stop on missing, duplicate, or
+invalid configuration. With the Caddy gateway healthy on that loopback port:
 
 ```sh
-curl -f http://127.0.0.1:8080/health/ready
-sudo tailscale serve --bg --https=443 http://127.0.0.1:8080
+PORT=$(sudo awk -F= '
+  $1 == "VERILIO_GATEWAY_PORT" {
+    count++
+    if (NF != 2 || $2 !~ /^[0-9]+$/ || $2 < 1 || $2 > 65535) invalid=1
+    port=$2
+  }
+  END { if (count != 1 || invalid) exit 1; print port }
+' /etc/verilio/verilio.env) || { echo 'Missing or invalid VERILIO_GATEWAY_PORT.' >&2; exit 1; }
+curl -f "http://127.0.0.1:$PORT/health/ready"
+sudo tailscale serve --bg --https=443 "http://127.0.0.1:$PORT"
 tailscale serve status
 ```
 
@@ -270,9 +285,19 @@ not enable Funnel. The host firewall must not open the loopback gateway, API, or
 
 ## 9. Health and logs
 
+Read and validate the configured host port again so this block can be used independently:
+
 ```sh
-curl -f http://127.0.0.1:8080/health/live
-curl -f http://127.0.0.1:8080/health/ready
+PORT=$(sudo awk -F= '
+  $1 == "VERILIO_GATEWAY_PORT" {
+    count++
+    if (NF != 2 || $2 !~ /^[0-9]+$/ || $2 < 1 || $2 > 65535) invalid=1
+    port=$2
+  }
+  END { if (count != 1 || invalid) exit 1; print port }
+' /etc/verilio/verilio.env) || { echo 'Missing or invalid VERILIO_GATEWAY_PORT.' >&2; exit 1; }
+curl -f "http://127.0.0.1:$PORT/health/live"
+curl -f "http://127.0.0.1:$PORT/health/ready"
 docker compose --env-file /etc/verilio/verilio.env \
   -f /opt/verilio/current/compose.prod.yml ps
 docker compose --env-file /etc/verilio/verilio.env \
@@ -308,6 +333,8 @@ target separately; its directory name also identifies the source-to-target trans
 `verilio_version` manifest field is a backward-compatible alias for the source/database version,
 not the incoming target. The globals dump is recovery metadata and may contain password hashes; it
 must be encrypted off-host and handled as sensitive. The manifest contains no credential.
+Predeploy backups do not expire any existing backups. Daily-backup runs retain their existing
+daily-retention policy. `server-deploy.sh` prints the completed predeploy backup path.
 
 Schedule that exact command once daily with a root-owned systemd timer or cron entry; `backup.sh`
 loads the version, backup directory, retention, and Compose project from the protected environment
@@ -391,3 +418,147 @@ new Tailscale node.
 
 This alpha provides backup-based recovery, not automatic failover. PostgreSQL replication,
 WAL/PITR, Kubernetes, Redis, queues, and public authentication remain outside D1.
+
+## 15. One-command main snapshots (private dogfooding only)
+
+**Snapshot ≠ official release.** A snapshot uses `main-<first 12 hexadecimal commit characters>`
+(for example `main-11187285dedb`) with the full fetched SHA in `release-manifest.txt`. It creates no
+Git tag or GitHub Release. There are no mutable `latest` tags. The wrapper uses the existing
+build/export/provenance/server-deploy scripts; production Compose and the immutable artifact format
+are unchanged. It does not run the full source/Chromium/release gate on this small host.
+
+### One-time source and deployment-user setup
+
+Use a trusted **non-root** deployment account with local Docker access and sudo privileges. Docker
+group membership is root-equivalent. Install Git and Docker's buildx and Compose plugins through
+the established Ubuntu/Docker installation process. No Node, pnpm, browser, or new service is needed.
+Set up read access to the GitHub repository using the account's usual SSH/HTTPS credentials; do not
+put tokens in the Git remote URL. The wrapper accepts the canonical `andresz74/verilio` HTTPS or SSH
+origin and does not manage authentication.
+
+After the initial production installation (sections 3–7), as that deployment user:
+
+```sh
+sudo install -d -o "$(id -un)" -g "$(id -gn)" /srv/verilio/source
+git clone https://github.com/andresz74/verilio.git /srv/verilio/source
+# The sibling scratch directory must be writable without making Git/builds root-owned.
+sudo install -d -o "$(id -un)" -g "$(id -gn)" /srv/verilio/snapshot-work
+docker info
+docker buildx version
+docker compose version
+```
+
+For a non-writable `/srv/verilio` parent, set this once in the deployment user's shell profile:
+
+```sh
+export VERILIO_SNAPSHOT_WORK_ROOT=/srv/verilio/snapshot-work
+```
+
+Default paths are `/opt/verilio/releases`, `/opt/verilio/current`, and `/etc/verilio/verilio.env`.
+An existing coherent current release and env are required, so there is always a recorded rollback
+target. `VERILIO_RELEASE_ROOT`, `VERILIO_CURRENT_LINK`, and `VERILIO_ENV_FILE` are supported for isolated
+fixtures/alternate private installations; do not casually change them on production. The release
+root must be an absolute physical directory. Use only the local Unix-socket Docker daemon, not
+`DOCKER_HOST` or a remote context.
+
+### Routine deployment
+
+Verify the latest daily/off-host recovery point as usual. Then run **without sudo**:
+
+```sh
+cd /srv/verilio/source
+./deploy/nc110-deploy-main.sh
+```
+
+The script refuses a dirty checkout (including untracked files), fetches only `origin/main`, resolves
+its exact full commit, and builds in a temporary detached worktree. It never switches/resets the
+source checkout or any local branch. A clean checkout of another branch is allowed: it still deploys
+**fetched main**, not that branch. Keep the source checkout's wrapper current using an explicit
+`git pull --ff-only` on main when deployment tooling changes; the wrapper does not rewrite itself.
+
+Flow:
+
+1. Validate tools, current selection/configuration, local Docker, and resources; acquire an exclusive
+   snapshot-operation directory lock in the release store.
+2. Fetch/resolve main; derive `main-<12-hex>`; create an invocation-specific scratch directory.
+3. Build the exact detached commit with the snapshot-only `VERILIO_ALLOW_UNRELEASED_BUILD=true` override
+   and `linux/amd64`; use the existing pinned `postgres:17.9-alpine`.
+4. Export the existing complete release format, verify the outer checksum, full source commit, and
+   existing pre-load provenance. Copy into a root-owned staging directory in the release store;
+   verify again, then move to the final immutable directory without overwriting.
+5. Run target provenance with a temporary env copy changing only `VERILIO_VERSION`. Refuse if the
+   original env/current selection changed during the build. Atomically replace each env/symlink
+   separately, preserving env owner/mode and all other config bytes, including the gateway port.
+6. Invoke the selected release's `server-deploy.sh` with the production env. It still owns source
+   inspection, image load/ID checks, predeploy backup, maintenance, migrations, readiness, and smoke.
+
+No secrets are read by the wrapper, no Tailscale/network changes occur, and no images/releases/backups
+are pruned. Only invocation-owned temporary staging/env/worktree files are cleaned up. An interrupted
+process may leave a `.snapshot-deploy.lock` or `.snapshot-install.*` directory; inspect the process
+and contents before an operator removes a stale lock/staging directory. These are not accepted
+releases. A dirty temporary worktree is retained instead of force-deleted. Do not run a manual/tagged
+deployment concurrently; the lock serializes snapshot commands, not other operator commands.
+
+### Resource headroom
+
+Builds contend with the running app on a 2 GB machine and can be slow. Keep the recommended 4 GB swap.
+The preflight shows `free -h` and requires **3 GiB combined available RAM + free swap**, plus **12 GiB
+free** on each filesystem holding scratch, releases, and the Docker data root. These are conservative
+minimum starting headroom for build layers, two compressed archive copies, and installation staging,
+not resource reservations or a guarantee against OOM/disk exhaustion. Shared filesystems do not
+gain separate budgets. Leave more space for a growing database/backups and use off-host official
+builds if the machine is busy. No automatic space recovery occurs.
+
+### Same-commit reruns and failures
+
+- A complete existing release is reused only after checksum/provenance and **full SHA** validation.
+  Even a 12-character prefix collision with another full SHA is rejected. A corrupt, incomplete,
+  symlinked, or mismatched final release is never overwritten.
+- Existing API/gateway tags require matching version/revision/platform labels. With an accepted
+  release they must also match its image IDs; absent tags can be restored by normal `docker load`.
+  Before export, a complete matching image pair can be reused. A partial pair from an interrupted
+  build is refused for operator inspection; the wrapper never silently overwrites one tag.
+- Each build/export uses fresh isolated staging, never a prior failed output as an accepted artifact.
+  Reuse still invokes server-deploy (and therefore its normal backup/maintenance/health steps).
+- Before selection, failures leave the current release/env and running containers unchanged. A
+  failed build may leave unused images/cache, and a verified installed release may remain for reuse.
+- After selection starts, failures show the phase/exit status, previous/target releases, and explicit
+  compatible rollback commands. Env/symlink replacement is not one cross-file transaction; interruption
+  between them is reported, not disguised as success. No automatic runtime rollback is attempted.
+
+Successful output includes full SHA, snapshot/previous version, current path, images, predeploy backup,
+configured gateway port, live/ready/smoke results, and rollback target. Backups retain source/target
+provenance exactly as for tagged deployments.
+
+### Inspect and roll back
+
+```sh
+sudo grep '^VERILIO_VERSION=' /etc/verilio/verilio.env
+readlink -f /opt/verilio/current
+sudo grep -E '^(verilio_version|source_commit)=' /opt/verilio/current/release-manifest.txt
+```
+
+For a **schema-compatible** rollback to an existing immutable release:
+
+```sh
+PREVIOUS='<previous-version>'
+sudo ln -sfn "/opt/verilio/releases/verilio-$PREVIOUS" /opt/verilio/current
+sudo sed -i "s/^VERILIO_VERSION=.*/VERILIO_VERSION=$PREVIOUS/" /etc/verilio/verilio.env
+sudo VERILIO_ENV_FILE=/etc/verilio/verilio.env /opt/verilio/current/deploy/server-deploy.sh
+```
+
+Keep `VERILIO_GATEWAY_PORT` and every other setting unchanged. Use the configured gateway port for
+health checks; do not assume the default 8080 is unused by other services. Follow section 13's
+restore-based procedure for incompatible/data-changing migrations. No down-migration automation exists.
+
+### Promote a dogfooded commit
+
+Record the manifest's full `source_commit`. On the development machine, check out that exact clean
+commit, run the complete source gate and disposable production release gate, and create a new unused
+explicit alpha tag following the established release process. Build/export again using that tag
+**without the unreleased override**; do not retag snapshot images or modify snapshot artifacts.
+Keep the snapshot and prior release available through the rollback window.
+
+Validate tooling changes off-host with `pnpm test:deploy` (provenance plus snapshot fixtures). The
+snapshot tests use temporary Git repositories and stub host/Docker operations, never nc110. They also
+run as part of `test-release.sh`; that full release gate still runs on the development machine.

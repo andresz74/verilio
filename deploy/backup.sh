@@ -98,7 +98,11 @@ chmod 0600 "$working_dir"/*
 mv "$working_dir" "$final_dir"
 trap - EXIT
 
-find "$backup_root" -mindepth 1 -maxdepth 1 -type d \
-  -name 'verilio-*-daily-*' -mtime "+$retention_days" -exec rm -rf -- {} +
+# Deployment must retain all existing recovery points. Retention belongs only
+# to the scheduled daily-backup workflow, never the predeploy command.
+if [[ "$kind" == "daily" ]]; then
+  find "$backup_root" -mindepth 1 -maxdepth 1 -type d \
+    -name 'verilio-*-daily-*' -mtime "+$retention_days" -exec rm -rf -- {} +
+fi
 
 echo "$final_dir"
