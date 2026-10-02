@@ -21,7 +21,7 @@ Personal device
       │ private HTTPS
       ▼
 Tailscale Serve on the NC110 host
-      │ http://127.0.0.1:8080
+      │ http://127.0.0.1:<VERILIO_GATEWAY_PORT>
       ▼
 Caddy gateway container
   ├── /          → immutable React assets
@@ -39,7 +39,8 @@ Long-running Compose services: `gateway`, `api`, and `postgres`.
 
 One-shot Compose service: `migrate`. It uses the API image and exits after applying the
 checked-in migrations. The API and PostgreSQL have no published host ports. Caddy publishes only
-`127.0.0.1:8080` by default.
+`127.0.0.1:<VERILIO_GATEWAY_PORT>` on the host, mapped to container port `8080`.
+The host-port default is `8080`, but commands must read the configured value rather than assume it.
 
 ## 3. NC110 host preparation
 
@@ -260,11 +261,21 @@ The symlink, env value, and manifest must identify the same release version.
 Install Tailscale on Ubuntu using its official instructions, then interactively join the intended
 tailnet. Do not commit or script a reusable auth key.
 
-With the Caddy gateway healthy on loopback:
+Read only `VERILIO_GATEWAY_PORT` from the production env (do not source the entire file).
+Require exactly one plain numeric TCP port in the range 1–65535; stop on missing, duplicate, or
+invalid configuration. With the Caddy gateway healthy on that loopback port:
 
 ```sh
-curl -f http://127.0.0.1:8080/health/ready
-sudo tailscale serve --bg --https=443 http://127.0.0.1:8080
+PORT=$(sudo awk -F= '
+  $1 == "VERILIO_GATEWAY_PORT" {
+    count++
+    if (NF != 2 || $2 !~ /^[0-9]+$/ || $2 < 1 || $2 > 65535) invalid=1
+    port=$2
+  }
+  END { if (count != 1 || invalid) exit 1; print port }
+' /etc/verilio/verilio.env) || { echo 'Missing or invalid VERILIO_GATEWAY_PORT.' >&2; exit 1; }
+curl -f "http://127.0.0.1:$PORT/health/ready"
+sudo tailscale serve --bg --https=443 "http://127.0.0.1:$PORT"
 tailscale serve status
 ```
 
@@ -274,9 +285,19 @@ not enable Funnel. The host firewall must not open the loopback gateway, API, or
 
 ## 9. Health and logs
 
+Read and validate the configured host port again so this block can be used independently:
+
 ```sh
-curl -f http://127.0.0.1:8080/health/live
-curl -f http://127.0.0.1:8080/health/ready
+PORT=$(sudo awk -F= '
+  $1 == "VERILIO_GATEWAY_PORT" {
+    count++
+    if (NF != 2 || $2 !~ /^[0-9]+$/ || $2 < 1 || $2 > 65535) invalid=1
+    port=$2
+  }
+  END { if (count != 1 || invalid) exit 1; print port }
+' /etc/verilio/verilio.env) || { echo 'Missing or invalid VERILIO_GATEWAY_PORT.' >&2; exit 1; }
+curl -f "http://127.0.0.1:$PORT/health/live"
+curl -f "http://127.0.0.1:$PORT/health/ready"
 docker compose --env-file /etc/verilio/verilio.env \
   -f /opt/verilio/current/compose.prod.yml ps
 docker compose --env-file /etc/verilio/verilio.env \
