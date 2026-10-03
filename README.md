@@ -7,25 +7,38 @@ The MVP is a TypeScript modular monolith: a React/Vite web app, a Fastify API,
 PostgreSQL with checked-in Drizzle migrations, shared Zod contracts, and a
 server-side Invoice PDF renderer.
 
-## Release boundary
+## Project status and safety
+
+The private/local fixed-owner MVP is technically complete and is being
+dogfooded as a private alpha. Public SaaS authentication, secure sessions,
+and the public-hosting authorization boundary are not implemented.
 
 This repository currently runs in documented **local/private fixed-owner
 mode**. `LOCAL_USER_ID` selects the one server-controlled owner; browser
 requests never supply an owner ID.
 
-Do not expose this build directly to the public Internet. Authentication,
+**Do not expose this build directly to the public Internet.** Authentication,
 secure sessions, and a public-hosted authorization boundary must be selected
-and implemented before a public SaaS deployment. The current release gate
-means the private/local MVP is technically complete; it does not mean public
-SaaS launch readiness.
+and implemented before a public SaaS deployment. Technical MVP completion
+does not imply public SaaS readiness.
 
-## Requirements
+## Ways to run Verilio
+
+| Workflow | Purpose | Requirements |
+| --- | --- | --- |
+| [Local development / evaluation](#local-quick-start) | Run locally as a reviewer or developer; multi-step setup. | Node.js 22+, pnpm 9, Docker Compose or PostgreSQL 17. |
+| [Private-alpha snapshot](#private-alpha-deployment) | Update an already-configured private host from exact fetched `origin/main`. | Git, local Docker with buildx/Compose, deployment-user permissions, and existing host configuration. Not a fresh-server installer. |
+| [Official tagged release](#official-release-workflow) | Build/test/export a strict immutable release off-host. | Clean tagged source and full release gate on the build machine; Docker Compose on the runtime destination. |
+
+## Local quick start
+
+Requirements:
 
 - Node.js 22 or newer
 - pnpm 9
 - Docker with Compose, or an equivalent PostgreSQL 17 instance
 
-## Fresh setup
+From the repository root:
 
 ```sh
 cp .env.example .env
@@ -38,8 +51,16 @@ pnpm dev
 The web app runs at `http://127.0.0.1:5173`. Vite proxies `/api` and `/health`
 to the Fastify API at `http://127.0.0.1:3000`.
 
-No seed data is required. Open Settings first and save the Business profile,
-then create a Client, Project, and optional Tasks.
+### First use
+
+No seed data is required:
+
+1. Open Settings.
+2. Save the Business profile.
+3. Create a Client.
+4. Create a Project.
+5. Optionally create Tasks.
+6. Start tracking time.
 
 ## Environment
 
@@ -58,7 +79,7 @@ credentials through Vite browser variables.
 
 ## Health and readiness
 
-With the API running:
+With the local API running on its default port:
 
 ```sh
 curl -f http://127.0.0.1:3000/health/live
@@ -76,6 +97,7 @@ pnpm typecheck
 pnpm test
 pnpm test:integration
 pnpm test:e2e
+pnpm test:deploy
 pnpm build
 git diff --check
 ```
@@ -105,15 +127,39 @@ production web server.
 
 ## Private alpha deployment
 
-The reproducible Docker/Tailscale deployment for a low-resource private host is
-documented in [docs/08-private_alpha_self_hosted_deployment.md](docs/08-private_alpha_self_hosted_deployment.md).
+See the [private-alpha deployment runbook](docs/08-private_alpha_self_hosted_deployment.md)
+for first-time host preparation, secrets, private ingress, backups, restore,
+rollback, and snapshot deployment details. The NC110 is the documented
+low-resource host example, not an application dependency. Tailscale Serve is
+an example private ingress; another private VPN/reverse proxy can replace it.
 
-The production runtime uses prebuilt `linux/amd64` images, Caddy behind
-Tailscale Serve, a one-shot migration container, and PostgreSQL 17 with a named
-volume. The runtime host does not need Node.js, pnpm, source code, or a container
-build toolchain.
+The runtime uses versioned `linux/amd64` API/Caddy images, a one-shot migration
+container, and PostgreSQL 17 with a persistent named volume. With an official
+prebuilt release, the destination host needs no Node.js, pnpm, source code,
+or container build toolchain.
 
-Build-host entry points:
+The optional **snapshot** path instead uses Git and Docker buildx/Compose to
+build on an already-configured private Linux host. After the runbook's one-time
+setup, run as the deployment user (not with sudo):
+
+```sh
+cd /srv/verilio/source
+./deploy/nc110-deploy-main.sh
+```
+
+This fetches exact `origin/main`, builds in a detached worktree, and deploys an
+immutable `main-<sha>` snapshot (12-character prefix; full SHA in the manifest).
+It creates no Git tag and is **private dogfooding, not an official release or
+a fresh-server installer**. No host Node/pnpm toolchain is required; Docker
+performs the build. Snapshot deployment does not replace the full release gate.
+
+## Official release workflow
+
+Build and test off-host on the development machine (OrbStack is preferred).
+Run the repository checks above and the full disposable production release
+gate below. Start from a clean commit with a matching immutable Git tag;
+replace `<git-tag>` with that tag, never `latest`. Do not use the unreleased-build
+override for official releases.
 
 ```sh
 ./deploy/build-release.sh <git-tag>
@@ -121,7 +167,11 @@ Build-host entry points:
 ./deploy/export-release.sh <git-tag>
 ```
 
-These commands do not publish images or deploy anything to a public service.
+The release gate exercises production startup/migrations, health, Chromium,
+restart persistence, backup, and restore. Export produces the checksummed image
+archive and deployment bundle for the runtime host; follow the runbook for
+transfer and installation. These commands do not publish images or deploy to
+a public service.
 
 ## Migration history notes
 
