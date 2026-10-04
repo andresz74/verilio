@@ -2128,7 +2128,8 @@ current archive-based release and existing-host snapshot procedures.
 
 ## D1 — Canonical Generic Container Contract
 
-**Status:** In progress; D01 complete. Full registry install validation remains planned.
+**Status:** In progress; D01 and D02 complete. Registry pull/provenance and clean-host runtime
+validation remain intentionally deferred to later slices.
 
 Deliver:
 
@@ -2219,6 +2220,9 @@ D11  Evaluate SBOM/signing and multi-arch publishing
 
 **D01 — COMPLETE:** [issue #23](https://github.com/andresz74/verilio/issues/23) /
 [PR #24](https://github.com/andresz74/verilio/pull/24), merged 2026-10-04.
-D02–D11 are planned; none is complete. D02 is a package/configuration mode consuming the canonical
-runtime, not a second production Compose stack. D03 defines the still-unselected GHCR namespace
+**D02 — COMPLETE:** [issue #27](https://github.com/andresz74/verilio/issues/27); PR reference
+will be added before review. The package generator copies canonical Compose, writes explicit
+repository/version configuration with portable secret paths, and includes runtime support files.
+No images or secrets are generated; no registry is contacted. D03–D11 remain planned.
+D02 consumes the canonical runtime, not a second production Compose stack. D03 defines the still-unselected GHCR namespace
 and naming contract before D04 publishing. Each slice uses one issue, one branch, and one PR.
