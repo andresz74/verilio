@@ -582,7 +582,7 @@ These paths do not create separate application architectures.
 
 ## 19.1 Plain Linux + Docker Compose
 
-This is the canonical supported environment.
+This is the canonical target environment.
 
 Validate generic clean-host distribution here first. The existing private-alpha runbook is
 available today; the generic registry bundle is still planned. Measure resources on tested hosts

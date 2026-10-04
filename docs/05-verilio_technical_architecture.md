@@ -1924,7 +1924,7 @@ Logo upload is not allowed to block core MVP billing functionality.
 # 56. Authentication and Deployment Boundary
 
 The accepted first distribution target is private/self-hosted deployment. Public hosted SaaS
-remains optional later; its authentication provider is still unresolved (ADR-015).
+remains optional later; its authentication provider remains unresolved under OAD-001.
 
 ## Architecture Position
 
@@ -2399,7 +2399,7 @@ must not require a second database or a platform-specific application fork.
 
 | Platform | Distribution model and support boundary |
 | --- | --- |
-| Plain Linux + Docker Compose | Canonical supported environment; generic clean-host bundle verification is still planned. |
+| Plain Linux + Docker Compose | Canonical target environment; generic clean-host bundle verification is still planned. |
 | CasaOS | Planned thin packaging around the generic Docker/Compose distribution; compatibility requires metadata plus install, persistence, and upgrade tests. |
 | Portainer | Planned deployment of canonical Compose as a Stack; do not claim compatibility until verified. |
 | Proxmox | Recommended target architecture is a Debian/Ubuntu Docker VM running the same Compose runtime; platform verification is planned. |
@@ -3026,8 +3026,10 @@ by [#23](https://github.com/andresz74/verilio/issues/23) /
 
 # 98. Open Architecture Decisions
 
-The following provider choices remain open for optional future public hosting. The first
-distribution model is accepted in ADR-015; former OAD-002 is resolved and is no longer open.
+OAD-001 and OAD-003 remain open provider decisions for optional future public hosting.
+Former OAD-002 is resolved by ADR-015, the accepted self-hosted distribution decision.
+OAD-004 is retained for historical continuity as a resolved decision; duration-only manual entry
+is already approved and implemented, not reopened.
 
 ## OAD-001 — Hosted Authentication Provider
 
