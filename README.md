@@ -189,3 +189,6 @@ example with `pg_dump`) and test restores for the chosen environment. Logo/file
 storage is optional and is not required for Invoice PDF generation.
 
 The product and engineering decisions live in `docs/01` through `docs/07`.
+Deployment procedures live in the [private-alpha runbook](docs/08-private_alpha_self_hosted_deployment.md);
+the accepted distribution direction and planned work live in the
+[self-hosted distribution plan](docs/09-verilio_self_hosted_distribution_plan.md).
