@@ -5,7 +5,8 @@
 **Product:** Verilio  
 **Document:** MVP Implementation Plan  
 **File:** `docs/06-verilio_mvp_implementation_plan.md`  
-**Status:** Draft v0.1  
+**Status:** Draft v0.1; core MVP complete, distribution workstream active\
+**Distribution revision:** 2026-10-04\
 **Depends on:**
 
 - `docs/01-verilio_product_requirements_document.md`
@@ -146,6 +147,16 @@ M7  Invoice Core
 M8  Invoice PDF & Lifecycle
 M9  MVP Hardening & Release Gate
 ```
+
+## Current Delivery State
+
+The core private/local fixed-owner MVP is complete, and private-alpha dogfooding is active.
+M0–M9 below retain the complete historical build plan and acceptance gates; they are not
+replaced by distribution tasks. Product refinements remain separate from the next delivery
+track: self-hosted distribution (section 33).
+
+Private/self-hosted first is accepted. Public hosted SaaS may be evaluated later and still
+requires authentication, secure session management, and authorization before public exposure.
 
 Optional P1 refinement follows after M9.
 
@@ -1622,13 +1633,18 @@ Do not add during MVP:
 
 ## OD-A — Deployment Model
 
-Affects authentication, storage, and packaging.
+**Resolved:** Private/self-hosted first. Public hosted SaaS may be evaluated later.
 
-May remain open through private/local development, but must be resolved before public deployment.
+Docker Compose is the canonical provider-neutral runtime; source-built and prebuilt images
+converge on that runtime. Platform packaging remains a thin wrapper. See ADR-015 in
+[docs/05](05-verilio_technical_architecture.md) and the
+[distribution plan](09-verilio_self_hosted_distribution_plan.md).
 
 ## OD-B — Authentication
 
-May remain deferred locally, but public hosted access requires authentication.
+Authentication remains deferred for trusted private fixed-owner operation. Public hosted access
+still requires authentication, secure session management, and server-side authorization.
+Self-hosted distribution does not implement or remove that requirement.
 
 ## OD-C — Duration-Only Manual Entry
 
@@ -2094,3 +2110,115 @@ The implementation should continuously protect the product promise:
 > **Track your work. Bill with confidence.**
 
 A feature is ready only when the user-visible workflow works **and** the underlying historical and financial data remains trustworthy.
+
+---
+
+# 33. Post-MVP Self-Hosted Distribution Workstream
+
+This is the next delivery track after the completed core MVP and current private-alpha
+operations. It packages the existing runtime; it does not reopen the application-domain
+milestones, alter billing rules, or solve public authentication. LAN, VPN, Tailscale/tailnet,
+and other trusted private networks remain the supported boundary. `LOCAL_USER_ID` is
+server-controlled; the browser never chooses the owner. Direct public Internet exposure remains
+unsupported.
+
+The full operational execution plan is [docs/09](09-verilio_self_hosted_distribution_plan.md).
+The [private-alpha runbook](08-private_alpha_self_hosted_deployment.md) remains the source of
+current archive-based release and existing-host snapshot procedures.
+
+## D1 — Canonical Generic Container Contract
+
+**Status:** In progress; D01 complete. Full registry install validation remains planned.
+
+Deliver:
+
+- configurable application image references
+- no unnecessary host-specific assumptions
+- source snapshot compatibility
+- tests for local/registry image source
+
+D01 proves repository interpolation with local defaults and custom repository strings; it does
+not prove registry pulls, registry-backed provenance, or a clean-host registry installation.
+
+## D2 — Official Image Publishing
+
+**Status:** Planned.
+
+Deliver:
+
+- registry namespace decision
+- release image publishing
+- immutable version tags
+- source/version metadata
+- pull verification
+
+## D3 — Generic Self-Hosted Release Bundle
+
+**Status:** Planned.
+
+Deliver:
+
+- Compose package
+- environment template
+- secret/bootstrap process
+- install/update docs
+- backup/rollback guidance
+- clean-host install verification
+
+## D4 — Platform Compatibility
+
+**Status:** Planned.
+
+Order:
+
+1. CasaOS
+2. Portainer
+3. Proxmox Docker VM
+4. additional platforms based on demand
+
+## D5 — Fresh Source-Based Installer
+
+**Status:** Planned.
+
+Deliver:
+
+- one supported source installation command
+- prerequisite checks
+- safe config/secrets
+- exact source identity
+- canonical runtime
+- health/rollback output
+
+## D6 — Hardening
+
+**Status:** Possible later work; not complete.
+
+Possible later work:
+
+- SBOM
+- signing/attestation
+- additional architectures
+- install CI
+- upgrade matrix
+
+## PR-Sized Distribution Slices
+
+```text
+D01  Parameterize Verilio API/Gateway image repositories
+D02  Add prebuilt-image Compose mode/package
+D03  Define GHCR image/version naming contract
+D04  Publish tagged release images to GHCR
+D05  Verify clean-host install from published images
+D06  Add generic self-host install/update documentation
+D07  Add CasaOS app package and test it
+D08  Verify/document Portainer Stack installation
+D09  Verify/document Proxmox Docker-VM installation
+D10  Add fresh source-based private installer
+D11  Evaluate SBOM/signing and multi-arch publishing
+```
+
+**D01 — COMPLETE:** [issue #23](https://github.com/andresz74/verilio/issues/23) /
+[PR #24](https://github.com/andresz74/verilio/pull/24), merged 2026-10-04.
+D02–D11 are planned; none is complete. D02 is a package/configuration mode consuming the canonical
+runtime, not a second production Compose stack. D03 defines the still-unselected GHCR namespace
+and naming contract before D04 publishing. Each slice uses one issue, one branch, and one PR.

@@ -5,7 +5,8 @@
 **Product:** Verilio  
 **Document:** Technical Architecture  
 **File:** `docs/05-verilio_technical_architecture.md`  
-**Status:** Draft v0.1  
+**Status:** Draft v0.1; self-hosted distribution decision accepted\
+**Distribution revision:** 2026-10-04\
 **Depends on:**
 
 - `docs/01-verilio_product_requirements_document.md`
@@ -1922,7 +1923,8 @@ Logo upload is not allowed to block core MVP billing functionality.
 
 # 56. Authentication and Deployment Boundary
 
-The product documents leave first deployment/authentication unresolved.
+The accepted first distribution target is private/self-hosted deployment. Public hosted SaaS
+remains optional later; its authentication provider remains unresolved under OAD-001.
 
 ## Architecture Position
 
@@ -1930,13 +1932,17 @@ The system should be authentication-ready, but the first private local developme
 
 ### Local/private mode
 
-A fixed local user may be bootstrapped.
+The private alpha uses one fixed owner selected by server-controlled `LOCAL_USER_ID`. The browser
+never chooses an owner. Supported access is LAN, VPN, Tailscale/tailnet, or another trusted private
+network. Direct public Internet exposure is unsupported while authentication, secure sessions,
+and a public authorization boundary are absent.
 
 ### Public deployment
 
 A public Internet deployment must not ship as an unauthenticated private-data application.
 
-Authentication must be introduced before public hosted access.
+Authentication, secure session management, and server-side authorization must be implemented
+before public hosted access. Self-hosting packaging does not satisfy those requirements.
 
 ## Data Model Rule
 
@@ -1948,7 +1954,9 @@ This minimizes future migration risk.
 
 # 57. Authentication Implementation
 
-Authentication provider/library is intentionally **not locked in this document** because the deployment model is still an open product decision.
+Authentication provider/library remains **open for optional future public hosting**. The initial
+deployment model is resolved as private/self-hosted first; choosing that model does not remove
+the public authentication requirement.
 
 Requirements for the eventual implementation:
 
@@ -1973,7 +1981,8 @@ Every request is validated server-side.
 
 Never trust client-supplied owner IDs.
 
-The owner/user comes from authenticated server context.
+The owner comes from server-controlled `LOCAL_USER_ID` in the current private alpha, or from
+authenticated server context once public hosting is implemented.
 
 ## Invoice URLs
 
@@ -2332,45 +2341,72 @@ Validate server environment variables at startup.
 
 # 74. Deployment Shape
 
-Recommended initial deployable shape:
+Docker Compose is the canonical generic self-hosted runtime, defined by
+[`compose.prod.yml`](../compose.prod.yml). PostgreSQL remains the authoritative database.
+The TypeScript modular monolith, React/Vite SPA, Fastify API, Drizzle migrations, and
+server-authoritative business state are unchanged by distribution packaging.
 
 ```text
-Web static assets
-     +
-Fastify API
-     +
-PostgreSQL
+Private LAN / VPN / tailnet / trusted network
+                    ↓
+Gateway (built React assets; /api and /health proxy)
+                    ↓
+Fastify API → PostgreSQL
+
+PostgreSQL healthy → one-shot migrate → API ready → Gateway
 ```
 
-The API may serve the built SPA in a simple single-container deployment, or web/API may be separate services.
+Keep same-origin web/API routing, private API/database networks, persistent PostgreSQL data,
+and the current loopback-only Gateway binding. Private ingress is a host concern; NC110 and
+Tailscale are operational examples, not mandatory application dependencies. Initial production
+images target `linux/amd64`; additional architectures require their own validation.
 
-Prefer same-origin routing where practical:
+## Installation Models
+
+**Model A — Source based**
 
 ```text
-https://verilio.example/
-https://verilio.example/api/v1/...
+source → exact commit/version → build images → canonical Compose runtime
 ```
 
-This simplifies:
+**Model B — Prebuilt containers**
 
-- Cookies/auth later.
-- CORS.
-- Deployment configuration.
+```text
+published images → released Compose package + environment/secrets → canonical Compose runtime
+```
+
+Both models converge on the same runtime contract. Image source is packaging/configuration,
+not application architecture. Source builds and the current exported image archives already
+use this runtime; registry-backed installation is planned, not delivered yet.
+
+D01 is complete via [issue #23](https://github.com/andresz74/verilio/issues/23) and
+[PR #24](https://github.com/andresz74/verilio/pull/24): `VERILIO_API_IMAGE` defaults to
+`verilio-api`, `VERILIO_GATEWAY_IMAGE` defaults to `verilio-gateway`, and the separate required
+`VERILIO_VERSION` supplies the explicit tag. No production dependency on `latest` is introduced.
+Existing source snapshots and official build/export/provenance behavior remain intact.
+
+See the [current private-alpha runbook](08-private_alpha_self_hosted_deployment.md) for today's
+operations and the [distribution plan](09-verilio_self_hosted_distribution_plan.md) for planned
+registry publishing, generic installs, and platform validation.
 
 ---
 
 # 75. Self-Hosted Compatibility
 
-Avoid mandatory dependencies on:
+The runtime remains provider-neutral. Avoid mandatory proprietary databases, queues,
+authentication providers, or object storage. PostgreSQL remains canonical; image packaging
+must not require a second database or a platform-specific application fork.
 
-- Proprietary databases.
-- Proprietary queues.
-- Proprietary auth providers.
-- Proprietary object storage.
+| Platform | Distribution model and support boundary |
+| --- | --- |
+| Plain Linux + Docker Compose | Canonical target environment; generic clean-host bundle verification is still planned. |
+| CasaOS | Planned thin packaging around the generic Docker/Compose distribution; compatibility requires metadata plus install, persistence, and upgrade tests. |
+| Portainer | Planned deployment of canonical Compose as a Stack; do not claim compatibility until verified. |
+| Proxmox | Recommended target architecture is a Debian/Ubuntu Docker VM running the same Compose runtime; platform verification is planned. |
 
-Provider adapters may be added later.
-
-A normal PostgreSQL database should remain sufficient for core product data.
+Proxmox positioning after validation: **"Proxmox-friendly: run Verilio in a Docker VM."**
+Verilio is not a native Proxmox application. Platform packages and guides remain thin wrappers.
+Public SaaS is an optional later direction, not a prerequisite for private distribution.
 
 ---
 
@@ -2461,7 +2497,10 @@ Rules:
 
 MVP report CSV is a product feature.
 
-Full backup/export is not yet defined as a product requirement, but self-hosted operation benefits from database-level backup instructions.
+Private-alpha operation already includes PostgreSQL backups, checksum verification, restore
+drills, and schema-aware rollback in the [deployment runbook](08-private_alpha_self_hosted_deployment.md).
+Generic distribution must preserve these protections and document total-host-loss recovery.
+These operational backups are distinct from the product CSV feature.
 
 Hosted deployment should eventually define:
 
@@ -2962,21 +3001,44 @@ The following decisions are considered accepted for the MVP architecture unless 
 
 ---
 
+## ADR-015 — Self-Hosted-First Docker Distribution
+
+**Status:** Accepted (2026-10-04). Resolves former OAD-002 — Local vs Hosted First Release.
+
+**Decision:** Private/self-hosted first. Docker Compose is the canonical provider-neutral runtime,
+with PostgreSQL as authoritative storage. Source-built and prebuilt-image installations converge
+on the same runtime; image repositories and release packages are configuration and packaging.
+CasaOS packages, Portainer Stack guidance, and Proxmox Docker-VM guidance remain thin wrappers.
+Public hosted SaaS may be evaluated later.
+
+**Reason:** Package the existing modular monolith for private users without duplicating domain
+architecture or runtime definitions. Preserve explicit immutable versions, durable data,
+understandable upgrades, and recoverable backups.
+
+**Consequences:** Maintain the fixed-owner private-network boundary. `LOCAL_USER_ID` stays
+server-controlled; direct public exposure still requires authentication, secure sessions, and
+public authorization. Platform and architecture claims require actual validation. D01 is complete
+by [#23](https://github.com/andresz74/verilio/issues/23) /
+[PR #24](https://github.com/andresz74/verilio/pull/24); later distribution work follows
+[docs/09](09-verilio_self_hosted_distribution_plan.md).
+
+---
+
 # 98. Open Architecture Decisions
 
-The following remain dependent on unresolved product/deployment choices.
+OAD-001 and OAD-003 remain open provider decisions for optional future public hosting.
+Former OAD-002 is resolved by ADR-015, the accepted self-hosted distribution decision.
+OAD-004 is retained for historical continuity as a resolved decision; duration-only manual entry
+is already approved and implemented, not reopened.
 
 ## OAD-001 — Hosted Authentication Provider
 
 Not selected until public-hosted deployment is confirmed.
 
-## OAD-002 — Local vs Hosted First Release
-
-Architecture supports both directions, but operational packaging differs.
-
 ## OAD-003 — File Storage Provider
 
-Local filesystem vs S3-compatible storage depends on deployment.
+Hosted storage provider remains unselected. A provider-neutral storage adapter may support
+local filesystem or S3-compatible storage; optional logo storage does not block private distribution.
 
 ## OAD-004 — Duration-Only Manual Entry
 
