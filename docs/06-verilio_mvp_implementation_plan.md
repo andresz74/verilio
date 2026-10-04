@@ -2220,8 +2220,8 @@ D11  Evaluate SBOM/signing and multi-arch publishing
 
 **D01 — COMPLETE:** [issue #23](https://github.com/andresz74/verilio/issues/23) /
 [PR #24](https://github.com/andresz74/verilio/pull/24), merged 2026-10-04.
-**D02 — COMPLETE:** [issue #27](https://github.com/andresz74/verilio/issues/27); PR reference
-will be added before review. The package generator copies canonical Compose, writes explicit
+**D02 — COMPLETE:** [issue #27](https://github.com/andresz74/verilio/issues/27) /
+[PR #28](https://github.com/andresz74/verilio/pull/28). The package generator copies canonical Compose, writes explicit
 repository/version configuration with portable secret paths, and includes runtime support files.
 No images or secrets are generated; no registry is contacted. D03–D11 remain planned.
 D02 consumes the canonical runtime, not a second production Compose stack. D03 defines the still-unselected GHCR namespace
