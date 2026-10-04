@@ -145,6 +145,9 @@ D01 is complete via [issue #23](https://github.com/andresz74/verilio/issues/23) 
 verifies Compose interpolation without pulling registry images. Defaults, source snapshots,
 and official build/export/provenance behavior remain unchanged.
 
+D02 adds a registry-neutral prebuilt package generator beside those flows. It creates a Compose
+package and environment example without images, secrets, or runtime installation.
+
 The current official release path exports checksummed local image archives; it does not publish
 official registry images. There is no generic fresh-host installer or validated CasaOS/Portainer/
 Proxmox package yet. The NC110 is the current constrained-host example, not a required host.
@@ -326,8 +329,19 @@ image: ${VERILIO_API_IMAGE:-verilio-api}:${VERILIO_VERSION:?Set VERILIO_VERSION 
 image: ${VERILIO_GATEWAY_IMAGE:-verilio-gateway}:${VERILIO_VERSION:?Set VERILIO_VERSION to an explicit release tag}
 ```
 
-The environment template retains local defaults and an explicit version. D02 will package a
-prebuilt-image mode using this same definition, not create another production stack.
+The canonical environment template retains local defaults and an explicit version. D02 now
+provides [`deploy/export-self-host-package.sh`](../deploy/export-self-host-package.sh):
+
+```sh
+./deploy/export-self-host-package.sh <explicit-version> <api-image-repository> <gateway-image-repository> [output-directory]
+```
+
+The generator writes `verilio-<version>-self-host/` under the output root (default `release/`),
+containing the unchanged canonical runtime as `compose.yml`, a package-specific
+`verilio.env.example`, concise `SELF_HOSTING.md`, and the init/smoke support scripts. Secret files
+are not generated. Their relative paths resolve from the directory containing `compose.yml`;
+`--env-file` resolves from the caller's working directory. This is package/configuration work,
+not a validated official registry install or another production stack.
 Registry-backed pull verification/provenance is later work; current release manifests and
 archive verification still use local image identities.
 
@@ -717,7 +731,8 @@ Official self-host distribution should be based on official releases, not arbitr
 
 ## D1 — Canonical Generic Container Contract
 
-**Status:** In progress; D01 complete. Full registry install validation remains planned.
+**Status:** In progress; D01 and D02 complete. Registry pull/provenance and clean-host runtime
+validation remain intentionally deferred to later slices.
 
 Deliver:
 
@@ -810,8 +825,11 @@ D11  Evaluate SBOM/signing and multi-arch publishing
 
 **D01 — COMPLETE:** [issue #23](https://github.com/andresz74/verilio/issues/23) /
 [PR #24](https://github.com/andresz74/verilio/pull/24), merged 2026-10-04.
-D02–D11 are planned; none is complete. D02 is a package/configuration mode consuming the canonical
-runtime, not a second production Compose stack. D03 defines the still-unselected GHCR namespace
+**D02 — COMPLETE:** [issue #27](https://github.com/andresz74/verilio/issues/27) /
+[PR #28](https://github.com/andresz74/verilio/pull/28). The package generator copies canonical Compose, writes explicit
+repository/version configuration with portable secret paths, and includes runtime support files.
+No images or secrets are generated; no registry is contacted. D03–D11 remain planned.
+D02 consumes the canonical runtime, not a second production Compose stack. D03 defines the still-unselected GHCR namespace
 and naming contract before D04 publishing. Each slice uses one issue, one branch, and one PR.
 
 Do not combine platform packages before the generic distribution is stable.
