@@ -251,56 +251,77 @@ This should become the easiest installation path for released versions.
 
 # 8. Image Distribution Strategy
 
-## 8.1 Planned Registry Contract
+## 8.1 Accepted Official Registry Contract
 
-GHCR publishing is planned in D03/D04. The namespace and image/version naming contract are
-still unselected; this documentation does not configure or publish images.
-
-Conceptual images:
+D03 selects GitHub Container Registry (GHCR) with these canonical repository-only values:
 
 ```text
-ghcr.io/<owner>/verilio-api:<version>
-ghcr.io/<owner>/verilio-gateway:<version>
+ghcr.io/andresz74/verilio-api
+ghcr.io/andresz74/verilio-gateway
 ```
 
-The exact namespace should be selected before implementation and documented once.
+The non-secret machine-readable contract is
+[`deploy/official-images.env`](../deploy/official-images.env):
 
-## 8.2 Tagging Rules
+```env
+VERILIO_OFFICIAL_API_IMAGE=ghcr.io/andresz74/verilio-api
+VERILIO_OFFICIAL_GATEWAY_IMAGE=ghcr.io/andresz74/verilio-gateway
+VERILIO_OFFICIAL_PLATFORM=linux/amd64
+```
 
-Official distribution must use immutable release identities.
+It contains only plain literal assignments, no release version, credentials, or interpolation.
+Future D04/D05 wrappers may consume it; the D02 exporter stays registry-neutral and accepts
+repositories as arguments. Current runtime env defaults remain `verilio-api` and
+`verilio-gateway` for the existing local/archive/source workflows.
 
-Examples:
+Official GHCR packages are intended to be **public**, so released self-hosters can pull without
+GitHub authentication. This records visibility intent only; no package is published and no
+visibility setting is changed by D03. Official images and a working registry installation are
+not delivered yet. D04 publishing and D05 clean-host validation remain planned.
+
+## 8.2 Version and Release Eligibility
+
+An official container tag must **exactly equal the immutable Verilio Git release tag**.
+For example:
 
 ```text
-v0.1.1-alpha.4
-v0.1.1-alpha.5
-v1.0.0
+Git tag: v0.1.1-alpha.4
+API: ghcr.io/andresz74/verilio-api:v0.1.1-alpha.4
+Gateway: ghcr.io/andresz74/verilio-gateway:v0.1.1-alpha.4
 ```
 
-Do not make documented production installs depend on:
+`VERILIO_VERSION` remains the explicit tag input. `VERILIO_API_IMAGE` and
+`VERILIO_GATEWAY_IMAGE` remain repository-only values, without tags or digests.
+The official D03/D04 contract excludes `latest`, floating `alpha`/`stable` tags, and `v0.1`/`v1`
+aliases. D04 must not publish `main-<sha>` snapshots to the official release repositories;
+private snapshots remain separate, local/source-based artifacts.
+
+D04 publishing must require an explicit non-latest release version, a matching immutable Git
+tag on the exact tagged source commit, clean source, and full official release qualification.
+The existing official source/disposable-production release gate remains authoritative; D03
+records these eligibility rules without implementing a publishing path or bypassing that gate.
+
+## 8.3 OCI Metadata Contract
+
+Both official application images must contain:
 
 ```text
-latest
+org.opencontainers.image.source=https://github.com/andresz74/verilio
+org.opencontainers.image.version=<exact release tag>
+org.opencontainers.image.revision=<full 40-char source SHA>
 ```
 
-Optional convenience tags may exist later only if immutable version pinning remains the recommended production path.
+The existing [`deploy/Dockerfile`](../deploy/Dockerfile) already labels both API and Gateway
+with version and revision (plus title), using `VERILIO_VERSION` and `VCS_REF` build arguments.
+[`build-release.sh`](../deploy/build-release.sh) supplies the explicit version and full commit.
+Reuse those existing labels; do not introduce a second version/revision metadata mechanism.
+The source label is not present yet: D04 must add it through the existing Dockerfile LABEL
+mechanism when publishing is implemented. D03 does not change image builds or add duplicate labels.
 
-## 8.3 Image Metadata
+## 8.4 Platform Contract
 
-Application images should retain:
-
-- Verilio version;
-- full source commit;
-- build architecture;
-- image identity/digest where useful.
-
-## 8.4 Architectures
-
-Do not claim multi-architecture support before images are actually built and tested for those architectures.
-
-Initial existing production target is `linux/amd64`.
-
-ARM64 may be considered later if self-hosting demand justifies it.
+Initial official images target **`linux/amd64` only**. ARM64 and multi-architecture publishing
+are not supported or claimed by this contract; evaluation remains D11/later work.
 
 ---
 
@@ -828,9 +849,18 @@ D11  Evaluate SBOM/signing and multi-arch publishing
 **D02 — COMPLETE:** [issue #27](https://github.com/andresz74/verilio/issues/27) /
 [PR #28](https://github.com/andresz74/verilio/pull/28). The package generator copies canonical Compose, writes explicit
 repository/version configuration with portable secret paths, and includes runtime support files.
-No images or secrets are generated; no registry is contacted. D03–D11 remain planned.
-D02 consumes the canonical runtime, not a second production Compose stack. D03 defines the still-unselected GHCR namespace
-and naming contract before D04 publishing. Each slice uses one issue, one branch, and one PR.
+No images or secrets are generated; no registry is contacted.
+
+**D03 — COMPLETE:** [issue #29](https://github.com/andresz74/verilio/issues/29); PR reference
+will be added before review. The official repositories are `ghcr.io/andresz74/verilio-api` and
+`ghcr.io/andresz74/verilio-gateway`, with exact immutable Git release tags and `linux/amd64` only.
+The non-secret contract is [`deploy/official-images.env`](../deploy/official-images.env).
+OCI source/version/full-revision requirements and public/anonymous-pull intent are documented;
+images have not been published. D04–D11 remain planned.
+
+D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes
+registry identity and release eligibility before D04 publishing. Each slice uses one issue,
+one branch, and one PR.
 
 Do not combine platform packages before the generic distribution is stable.
 
