@@ -46,7 +46,7 @@ services:
       - backend
 
   migrate:
-    image: verilio-api:${VERILIO_VERSION:?Set VERILIO_VERSION to an explicit release tag}
+    image: ${VERILIO_API_IMAGE:-verilio-api}:${VERILIO_VERSION:?Set VERILIO_VERSION to an explicit release tag}
     command: ["node", "dist/migrate.js"]
     environment:
       DATABASE_URL_FILE: /run/secrets/database_url
@@ -68,7 +68,7 @@ services:
       - backend
 
   api:
-    image: verilio-api:${VERILIO_VERSION:?Set VERILIO_VERSION to an explicit release tag}
+    image: ${VERILIO_API_IMAGE:-verilio-api}:${VERILIO_VERSION:?Set VERILIO_VERSION to an explicit release tag}
     environment:
       API_HOST: 0.0.0.0
       API_PORT: 3000
@@ -105,7 +105,7 @@ services:
       - backend
 
   gateway:
-    image: verilio-gateway:${VERILIO_VERSION:?Set VERILIO_VERSION to an explicit release tag}
+    image: ${VERILIO_GATEWAY_IMAGE:-verilio-gateway}:${VERILIO_VERSION:?Set VERILIO_VERSION to an explicit release tag}
     depends_on:
       api:
         condition: service_healthy
