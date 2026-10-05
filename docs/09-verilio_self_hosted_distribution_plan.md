@@ -189,8 +189,8 @@ The canonical deployment contract must remain usable regardless of whether appli
 # 7. Supported Installation Models
 
 These are the two accepted models for the same runtime. D05 validated the generated prebuilt
-package with published alpha.5 images on a clean private Linux host. The full generic install/update
-guide (D06) and fresh source installer (D10) remain future deliverables.
+package with published alpha.5 images on a clean private Linux host. The standalone generic
+install/update guide (D06) is complete; the fresh source installer (D10) remains planned.
 
 ## 7.1 Model A — Source-Based Installation
 
@@ -282,7 +282,8 @@ Official GHCR packages are **public** for the first successfully published relea
 [workflow run 37318991060](https://github.com/andresz74/verilio/actions/runs/37318991060).
 The refs/digests and source identity are recorded in section 23. D05 verified anonymous pull,
 canonical startup, and persistence/recreation on a clean Ubuntu 24.04.5 LTS `linux/amd64` host.
-D06 generic install/update documentation remains planned.
+D06 standalone generic install/update documentation is complete; cross-version upgrades remain
+unvalidated and registry-backed package provenance remains unresolved.
 
 ## 8.2 Version and Release Eligibility
 
@@ -395,16 +396,20 @@ still use local image identities.
 
 A developer with a clean private Linux VM/server should be able to install Verilio without understanding the monorepo.
 
-Future target experience (conceptual; the released registry package does not exist yet):
+Current generated-package procedure is in the standalone [self-host guide](../deploy/SELF_HOSTING.md).
+A trusted machine exports from an exact release-tag checkout; only the generated package is
+transferred to the runtime host. No downloadable GitHub Release self-host bundle exists yet.
+The guide explains refreshing only the packaged documentation when using the historical alpha.5 tag.
+
+Runtime flow after receiving that package (secrets must be configured first):
 
 ```sh
-mkdir verilio
-cd verilio
-# obtain released self-host package
-cp .env.example .env
-# generate/configure required values
-docker compose pull
-docker compose up -d
+cd verilio-v0.1.1-alpha.5-self-host
+cp verilio.env.example verilio.env
+# Follow SELF_HOSTING.md to set a stable owner and create protected secrets.
+docker compose --env-file verilio.env -f compose.yml config --quiet
+docker compose --env-file verilio.env -f compose.yml pull
+docker compose --env-file verilio.env -f compose.yml up -d --wait
 ```
 
 A helper installer may reduce this further, but Compose must remain understandable without the helper.
@@ -642,7 +647,7 @@ This is the canonical target environment.
 
 D05 validated the generated registry package on an isolated Ubuntu 24.04.5 LTS `linux/amd64` host
 with its own Docker Engine and no source checkout. The existing private-alpha runbook remains
-available; D06 generic install/update guidance is next. Measure resources on tested hosts rather
+available; D06 standalone generic install/update guidance is complete. Measure resources on tested hosts rather
 than promise universal hardware minimums; building source needs more headroom than running
 prebuilt images.
 
@@ -765,7 +770,8 @@ Purpose:
 - release qualification;
 - currently: checksummed exported image archives, deployment bundles, and published GHCR images;
 - validated: D02-generated self-host package with alpha.5 images on a clean Ubuntu 24.04.5 LTS host;
-- planned: D06 generic install/update guidance and validated platform packages.
+- documented: D06 generic install/update/backup/rollback guidance for that generated package;
+- planned: validated platform packages and cross-version upgrade qualification.
 
 Official self-host distribution should be based on official releases, not arbitrary `main` snapshots.
 
@@ -807,8 +813,10 @@ Deliver:
 
 ## D3 — Generic Self-Hosted Release Bundle
 
-**Status:** In progress; D02 package shape and D05 clean-host validation complete. D06 generic
-install/update and backup/rollback documentation remains planned.
+**Status:** Complete for the initial `linux/amd64` generated-package path: D02 package/config
+shape, D05 clean-host validation, and D06 standalone install/update/backup/rollback guidance.
+Downloadable release assets and cross-version upgrade qualification are not claimed;
+registry-backed package provenance remains unresolved.
 
 Deliver:
 
@@ -930,8 +938,16 @@ transferred. Node/pnpm were absent; Git was installed as a Docker package depend
 - No source build/toolchain or GHCR login was used. The disposable stack, volume, and host were
   removed after evidence capture; NC110 and existing installations were untouched.
 
-D05 is complete; D06 generic install/update documentation is next and remains planned.
-D06–D11 are not complete. This single-host validation does not establish CasaOS, Portainer,
+**D06 — COMPLETE:** [issue #41](https://github.com/andresz74/verilio/issues/41). The standalone
+[packaged self-host guide](../deploy/SELF_HOSTING.md) covers honest exact-tag package preparation,
+private security/prerequisites, stable owner/config/secrets, anonymous pull and digest inspection,
+install/health/first use/logs, logical backup and restore, target-package updates, schema-aware
+rollback, safe removal and troubleshooting. README links the validated prebuilt path.
+D02 + D05 + D06 complete D3 for the initial `linux/amd64` generated-package path; downloadable
+release assets, cross-version upgrade qualification and registry-backed package provenance are
+not implied. D07–D11 remain planned; D07 has not started.
+
+This single-host validation does not establish CasaOS, Portainer,
 Proxmox, ARM64/multi-architecture, upgrade/restore qualification, or public Internet readiness.
 
 D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes

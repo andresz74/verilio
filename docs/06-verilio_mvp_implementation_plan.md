@@ -2160,8 +2160,10 @@ Deliver:
 
 ## D3 — Generic Self-Hosted Release Bundle
 
-**Status:** In progress; D02 package shape and D05 clean-host validation complete. D06 generic
-install/update and backup/rollback documentation remains planned.
+**Status:** Complete for the initial `linux/amd64` generated-package path: D02 package/config
+shape, D05 clean-host validation, and D06 standalone install/update/backup/rollback guidance.
+Downloadable release assets and cross-version upgrade qualification are not claimed;
+registry-backed package provenance remains unresolved.
 
 Deliver:
 
@@ -2281,8 +2283,16 @@ transferred. Node/pnpm were absent; Git was installed as a Docker package depend
 - No source build/toolchain or GHCR login was used. The disposable stack, volume, and host were
   removed after evidence capture; NC110 and existing installations were untouched.
 
-D05 is complete; D06 generic install/update documentation is next and remains planned.
-D06–D11 are not complete. This single-host validation does not establish CasaOS, Portainer,
+**D06 — COMPLETE:** [issue #41](https://github.com/andresz74/verilio/issues/41). The standalone
+[packaged self-host guide](../deploy/SELF_HOSTING.md) covers honest exact-tag package preparation,
+private security/prerequisites, stable owner/config/secrets, anonymous pull and digest inspection,
+install/health/first use/logs, logical backup and restore, target-package updates, schema-aware
+rollback, safe removal and troubleshooting. README links the validated prebuilt path.
+D02 + D05 + D06 complete D3 for the initial `linux/amd64` generated-package path; downloadable
+release assets, cross-version upgrade qualification and registry-backed package provenance are
+not implied. D07–D11 remain planned; D07 has not started.
+
+This single-host validation does not establish CasaOS, Portainer,
 Proxmox, ARM64/multi-architecture, upgrade/restore qualification, or public Internet readiness.
 
 D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes

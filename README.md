@@ -27,6 +27,7 @@ does not imply public SaaS readiness.
 | Workflow | Purpose | Requirements |
 | --- | --- | --- |
 | [Local development / evaluation](#local-quick-start) | Run locally as a reviewer or developer; multi-step setup. | Node.js 22+, pnpm 9, Docker Compose or PostgreSQL 17. |
+| [Prebuilt private self-host](deploy/SELF_HOSTING.md) | Install the validated private `linux/amd64` path using official GHCR images. | Docker Engine + Compose and standard shell utilities; no runtime Node/pnpm/source builds. Package generated on a separate trusted preparation machine. |
 | [Private-alpha snapshot](#private-alpha-deployment) | Update an already-configured private host from exact fetched `origin/main`. | Git, local Docker with buildx/Compose, deployment-user permissions, and existing host configuration. Not a fresh-server installer. |
 | [Official tagged release](#official-release-workflow) | Build/test/export a strict immutable release off-host. | Clean tagged source and full release gate on the build machine; Docker Compose on the runtime destination. |
 
@@ -172,6 +173,13 @@ restart persistence, backup, and restore. Export produces the checksummed image
 archive and deployment bundle for the runtime host; follow the runbook for
 transfer and installation. These commands do not publish images or deploy to
 a public service.
+
+Official GHCR images for `v0.1.1-alpha.5` are published and anonymously pullable. The
+[prebuilt self-host guide](deploy/SELF_HOSTING.md) covers the validated private `linux/amd64`
+package path, configuration, install and operations. The archive commands above remain separate
+from registry publishing. A downloadable GitHub Release self-host bundle is not available yet;
+the guide explains trusted exact-tag package preparation. Cross-version registry upgrades have
+not yet been validated. The direct-public-Internet warning above still applies.
 
 ## Migration history notes
 
