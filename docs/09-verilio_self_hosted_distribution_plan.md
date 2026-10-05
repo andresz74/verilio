@@ -150,8 +150,8 @@ package and environment example without images, secrets, or runtime installation
 
 Official release distribution now includes published GHCR images alongside the existing
 checksummed local image archives. The first publication, `v0.1.1-alpha.5`, passed anonymous
-verification. D05 clean-host installation remains planned; there is no generic fresh-host
-installer or validated CasaOS/Portainer/Proxmox package yet. The NC110 is the current
+verification. D05 clean-host installation passed on Ubuntu 24.04.5 LTS `linux/amd64`; there is
+no generic fresh-host installer or validated CasaOS/Portainer/Proxmox package yet. The NC110 is the current
 constrained-host example, not a required host.
 
 ---
@@ -188,8 +188,9 @@ The canonical deployment contract must remain usable regardless of whether appli
 
 # 7. Supported Installation Models
 
-These are the two accepted models for the same runtime. Registry-based prebuilt installation
-and the fresh source installer are future deliverables, not currently available commands.
+These are the two accepted models for the same runtime. D05 validated the generated prebuilt
+package with published alpha.5 images on a clean private Linux host. The full generic install/update
+guide (D06) and fresh source installer (D10) remain future deliverables.
 
 ## 7.1 Model A — Source-Based Installation
 
@@ -272,16 +273,16 @@ VERILIO_OFFICIAL_PLATFORM=linux/amd64
 ```
 
 It contains only plain literal assignments, no release version, credentials, or interpolation.
-The D04 publishing helper consumes it; future D05 wrappers may also consume it. The D02 exporter
+The D04 publishing helper consumes it. D05 passed these repositories to the D02 exporter, which
 stays registry-neutral and accepts repositories as arguments. Current runtime env defaults remain `verilio-api` and
 `verilio-gateway` for the existing local/archive/source workflows.
 
 Official GHCR packages are **public** for the first successfully published release,
 `v0.1.1-alpha.5`; both exact image tags passed anonymous verification in
 [workflow run 37318991060](https://github.com/andresz74/verilio/actions/runs/37318991060).
-The refs/digests and source identity are recorded in section 23. Published images exist;
-a generic clean-host installation has not been validated. D05 remains responsible for that
-verification and is planned next.
+The refs/digests and source identity are recorded in section 23. D05 verified anonymous pull,
+canonical startup, and persistence/recreation on a clean Ubuntu 24.04.5 LTS `linux/amd64` host.
+D06 generic install/update documentation remains planned.
 
 ## 8.2 Version and Release Eligibility
 
@@ -381,10 +382,10 @@ The generator writes `verilio-<version>-self-host/` under the output root (defau
 containing the unchanged canonical runtime as `compose.yml`, a package-specific
 `verilio.env.example`, concise `SELF_HOSTING.md`, and the init/smoke support scripts. Secret files
 are not generated. Their relative paths resolve from the directory containing `compose.yml`;
-`--env-file` resolves from the caller's working directory. This is package/configuration work,
-not a validated official registry install or another production stack.
-Registry-backed pull verification/provenance is later work; current release manifests and
-archive verification still use local image identities.
+`--env-file` resolves from the caller's working directory. D05 validated this same package and
+canonical runtime using anonymous pulls of the official alpha.5 images on a clean Linux host.
+Registry-backed provenance is outside D05; current release manifests and archive verification
+still use local image identities.
 
 ---
 
@@ -639,10 +640,11 @@ These paths do not create separate application architectures.
 
 This is the canonical target environment.
 
-Validate generic clean-host distribution here first. The existing private-alpha runbook is
-available today; the generic registry bundle is still planned. Measure resources on tested hosts
-rather than promise universal hardware minimums; building source needs more headroom than
-running prebuilt images.
+D05 validated the generated registry package on an isolated Ubuntu 24.04.5 LTS `linux/amd64` host
+with its own Docker Engine and no source checkout. The existing private-alpha runbook remains
+available; D06 generic install/update guidance is next. Measure resources on tested hosts rather
+than promise universal hardware minimums; building source needs more headroom than running
+prebuilt images.
 
 ## 19.2 Proxmox
 
@@ -762,7 +764,8 @@ Purpose:
 
 - release qualification;
 - currently: checksummed exported image archives, deployment bundles, and published GHCR images;
-- planned: clean-host validation of generic self-host packages and validated platform packages.
+- validated: D02-generated self-host package with alpha.5 images on a clean Ubuntu 24.04.5 LTS host;
+- planned: D06 generic install/update guidance and validated platform packages.
 
 Official self-host distribution should be based on official releases, not arbitrary `main` snapshots.
 
@@ -772,8 +775,9 @@ Official self-host distribution should be based on official releases, not arbitr
 
 ## D1 — Canonical Generic Container Contract
 
-**Status:** In progress; D01 and D02 complete. Registry pull/provenance and clean-host runtime
-validation remain intentionally deferred to later slices.
+**Status:** In progress; D01 and D02 complete. D05 has verified anonymous registry pull and the
+clean-host runtime for the initial `linux/amd64` release. Registry-backed provenance remains
+outside D05; existing archive provenance is unchanged.
 
 Deliver:
 
@@ -789,8 +793,9 @@ not prove registry pulls, registry-backed provenance, or a clean-host registry i
 
 **Status:** Complete for the initial `linux/amd64` official publishing path. D03 defined the
 contract; D04 successfully published the exact tested images for `v0.1.1-alpha.5` using immutable
-tags, verified OCI metadata, and verified anonymous access. D05 clean-host installation remains
-planned; this does not establish platform, ARM64/multi-architecture, or public Internet support.
+tags, verified OCI metadata, and verified anonymous access. D05 clean-host installation has also
+passed on Ubuntu 24.04.5 LTS; this does not establish platform, ARM64/multi-architecture, or public
+Internet support.
 
 Deliver:
 
@@ -802,7 +807,8 @@ Deliver:
 
 ## D3 — Generic Self-Hosted Release Bundle
 
-**Status:** Planned.
+**Status:** In progress; D02 package shape and D05 clean-host validation complete. D06 generic
+install/update and backup/rollback documentation remains planned.
 
 Deliver:
 
@@ -900,9 +906,33 @@ tags, verified OCI source/version/revision metadata and digests, and verified an
 - Anonymous Gateway verification: **passed**.
 
 `v0.1.1-alpha.4` remains an untouched failed pre-publication qualification attempt, not a
-published image release. D05 is next and remains planned; D05–D11 are not complete. Published
-images do not establish clean-host installation, platform compatibility, ARM64/multi-architecture
-support, or public Internet readiness.
+published image release.
+
+**D05 — COMPLETE:** [issue #39](https://github.com/andresz74/verilio/issues/39), validated
+2026-10-05 on a fresh isolated OrbStack Ubuntu 24.04.5 LTS `linux/amd64` host, with host file
+sharing disabled and its own Docker Engine 29.1.3 / Compose 2.40.3. Only the generated D02
+package was transferred; no source checkout, local images, credentials, or build output was
+transferred. Node/pnpm were absent; Git was installed as a Docker package dependency but unused.
+
+- Release: `v0.1.1-alpha.5`; image source: `db222d2446a1f12b5e29059665a6db7f2b4d1783`.
+- API: `ghcr.io/andresz74/verilio-api:v0.1.1-alpha.5`.
+- API RepoDigest: `ghcr.io/andresz74/verilio-api@sha256:9d76436b4dd86cbca0b8a53cfe42be7554878b7e98d69298cee568364e1450e6`.
+- Gateway: `ghcr.io/andresz74/verilio-gateway:v0.1.1-alpha.5`.
+- Gateway RepoDigest: `ghcr.io/andresz74/verilio-gateway@sha256:dcb455a392453ac5e6514bb6a1047095df49612263e25cbe9724494ef21fceb8`.
+- Both images were absent before anonymous Compose pull with an empty Docker credential config;
+  pulled digests matched D04 exactly. Canonical Compose config contained no builds and retained
+  `postgres:17.9-alpine`.
+- PostgreSQL bootstrap/health, migration (exit 0), API/Gateway health, and packaged SPA/deep-route/
+  live/ready/database-connected smoke checks passed before and after full container recreation.
+- Only Gateway published a host port, at `127.0.0.1:8080`; API/PostgreSQL published none.
+- Business Settings `Verilio D05 Validation 2026-10-05T19:45:21Z`, saved through the Verilio API,
+  survived recreation with the same `verilio_pgdata` volume and stable server owner UUID.
+- No source build/toolchain or GHCR login was used. The disposable stack, volume, and host were
+  removed after evidence capture; NC110 and existing installations were untouched.
+
+D05 is complete; D06 generic install/update documentation is next and remains planned.
+D06–D11 are not complete. This single-host validation does not establish CasaOS, Portainer,
+Proxmox, ARM64/multi-architecture, upgrade/restore qualification, or public Internet readiness.
 
 D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes
 registry identity and release eligibility before D04 publishing. Each slice uses one issue,
