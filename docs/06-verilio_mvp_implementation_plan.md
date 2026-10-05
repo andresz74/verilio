@@ -2235,7 +2235,8 @@ OCI source/version/full-revision requirements and public/anonymous-pull intent a
 images have not been published.
 
 **D04 — publishing mechanism implemented; first real official tagged publication pending:**
-[issue #31](https://github.com/andresz74/verilio/issues/31). The tag-push/manual workflow qualifies
+[issue #31](https://github.com/andresz74/verilio/issues/31) /
+[PR #32](https://github.com/andresz74/verilio/pull/32). The tag-push/manual workflow qualifies
 exact tagged source and the existing archive release before GHCR login. It builds once, tags the
 same tested local image objects, refuses existing/partial remote tags, verifies metadata and
 anonymous access after logout, and records refs/digests/source/platform in the job summary.
