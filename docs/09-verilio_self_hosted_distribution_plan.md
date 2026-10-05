@@ -925,7 +925,7 @@ transferred. Node/pnpm were absent; Git was installed as a Docker package depend
 - PostgreSQL bootstrap/health, migration (exit 0), API/Gateway health, and packaged SPA/deep-route/
   live/ready/database-connected smoke checks passed before and after full container recreation.
 - Only Gateway published a host port, at `127.0.0.1:8080`; API/PostgreSQL published none.
-- Business Settings `Verilio D05 Validation 2026-10-05T19:45:21Z`, saved through the public API,
+- Business Settings `Verilio D05 Validation 2026-10-05T19:45:21Z`, saved through the Verilio API,
   survived recreation with the same `verilio_pgdata` volume and stable server owner UUID.
 - No source build/toolchain or GHCR login was used. The disposable stack, volume, and host were
   removed after evidence capture; NC110 and existing installations were untouched.
