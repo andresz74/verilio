@@ -2128,8 +2128,9 @@ current archive-based release and existing-host snapshot procedures.
 
 ## D1 — Canonical Generic Container Contract
 
-**Status:** In progress; D01 and D02 complete. Registry pull/provenance and clean-host runtime
-validation remain intentionally deferred to later slices.
+**Status:** In progress; D01 and D02 complete. D05 has verified anonymous registry pull and the
+clean-host runtime for the initial `linux/amd64` release. Registry-backed provenance remains
+outside D05; existing archive provenance is unchanged.
 
 Deliver:
 
@@ -2145,8 +2146,9 @@ not prove registry pulls, registry-backed provenance, or a clean-host registry i
 
 **Status:** Complete for the initial `linux/amd64` official publishing path. D03 defined the
 contract; D04 successfully published the exact tested images for `v0.1.1-alpha.5` using immutable
-tags, verified OCI metadata, and verified anonymous access. D05 clean-host installation remains
-planned; this does not establish platform, ARM64/multi-architecture, or public Internet support.
+tags, verified OCI metadata, and verified anonymous access. D05 clean-host installation has also
+passed on Ubuntu 24.04.5 LTS; this does not establish platform, ARM64/multi-architecture, or public
+Internet support.
 
 Deliver:
 
@@ -2158,7 +2160,8 @@ Deliver:
 
 ## D3 — Generic Self-Hosted Release Bundle
 
-**Status:** Planned.
+**Status:** In progress; D02 package shape and D05 clean-host validation complete. D06 generic
+install/update and backup/rollback documentation remains planned.
 
 Deliver:
 
@@ -2254,9 +2257,33 @@ tags, verified OCI source/version/revision metadata and digests, and verified an
 - Anonymous Gateway verification: **passed**.
 
 `v0.1.1-alpha.4` remains an untouched failed pre-publication qualification attempt, not a
-published image release. D05 is next and remains planned; D05–D11 are not complete. Published
-images do not establish clean-host installation, platform compatibility, ARM64/multi-architecture
-support, or public Internet readiness.
+published image release.
+
+**D05 — COMPLETE:** [issue #39](https://github.com/andresz74/verilio/issues/39), validated
+2026-10-05 on a fresh isolated OrbStack Ubuntu 24.04.5 LTS `linux/amd64` host, with host file
+sharing disabled and its own Docker Engine 29.1.3 / Compose 2.40.3. Only the generated D02
+package was transferred; no source checkout, local images, credentials, or build output was
+transferred. Node/pnpm were absent; Git was installed as a Docker package dependency but unused.
+
+- Release: `v0.1.1-alpha.5`; image source: `db222d2446a1f12b5e29059665a6db7f2b4d1783`.
+- API: `ghcr.io/andresz74/verilio-api:v0.1.1-alpha.5`.
+- API RepoDigest: `ghcr.io/andresz74/verilio-api@sha256:9d76436b4dd86cbca0b8a53cfe42be7554878b7e98d69298cee568364e1450e6`.
+- Gateway: `ghcr.io/andresz74/verilio-gateway:v0.1.1-alpha.5`.
+- Gateway RepoDigest: `ghcr.io/andresz74/verilio-gateway@sha256:dcb455a392453ac5e6514bb6a1047095df49612263e25cbe9724494ef21fceb8`.
+- Both images were absent before anonymous Compose pull with an empty Docker credential config;
+  pulled digests matched D04 exactly. Canonical Compose config contained no builds and retained
+  `postgres:17.9-alpine`.
+- PostgreSQL bootstrap/health, migration (exit 0), API/Gateway health, and packaged SPA/deep-route/
+  live/ready/database-connected smoke checks passed before and after full container recreation.
+- Only Gateway published a host port, at `127.0.0.1:8080`; API/PostgreSQL published none.
+- Business Settings `Verilio D05 Validation 2026-10-05T19:45:21Z`, saved through the public API,
+  survived recreation with the same `verilio_pgdata` volume and stable server owner UUID.
+- No source build/toolchain or GHCR login was used. The disposable stack, volume, and host were
+  removed after evidence capture; NC110 and existing installations were untouched.
+
+D05 is complete; D06 generic install/update documentation is next and remains planned.
+D06–D11 are not complete. This single-host validation does not establish CasaOS, Portainer,
+Proxmox, ARM64/multi-architecture, upgrade/restore qualification, or public Internet readiness.
 
 D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes
 registry identity and release eligibility before D04 publishing. Each slice uses one issue,

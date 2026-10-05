@@ -3,7 +3,12 @@
 This D02 package consumes **prebuilt application images** using a copy of the canonical
 production Compose runtime. It establishes package/configuration shape only: it does not
 publish images, select a registry namespace, generate secrets, or install/deploy Verilio.
-Official registry images and clean-host installation validation are later work. The configured
+Official alpha.5 images have been published. D05 verified this package on a clean isolated
+Ubuntu 24.04.5 LTS `linux/amd64` host (Docker Engine 29.1.3 / Compose 2.40.3): anonymous pull with
+exact published digest matches, canonical startup/migrations/health/smoke, loopback-only exposure,
+and Business Settings persistence after recreation all passed without source builds or Node/pnpm.
+See [issue #39](https://github.com/andresz74/verilio/issues/39) for exact refs/digests and evidence.
+D05 is complete; D06 generic install/update documentation remains next/planned. The configured
 repositories and explicit version must identify real, compatible Verilio images before startup;
 test-only `registry.example.invalid` inputs are not runnable. Initial production architecture
 is `linux/amd64`; other architectures are not claimed.
