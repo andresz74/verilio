@@ -37,6 +37,7 @@ ARG VERILIO_VERSION=development
 ARG VCS_REF=unknown
 
 LABEL org.opencontainers.image.title="Verilio API" \
+      org.opencontainers.image.source="https://github.com/andresz74/verilio" \
       org.opencontainers.image.version="${VERILIO_VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
 
@@ -62,6 +63,7 @@ ARG VERILIO_VERSION=development
 ARG VCS_REF=unknown
 
 LABEL org.opencontainers.image.title="Verilio Gateway" \
+      org.opencontainers.image.source="https://github.com/andresz74/verilio" \
       org.opencontainers.image.version="${VERILIO_VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}"
 

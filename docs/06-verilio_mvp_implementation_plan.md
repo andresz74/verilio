@@ -2143,7 +2143,8 @@ not prove registry pulls, registry-backed provenance, or a clean-host registry i
 
 ## D2 — Official Image Publishing
 
-**Status:** Planned.
+**Status:** In progress. D03 contract complete; D04 publishing mechanism implemented. First real
+official tagged publication and anonymous verification remain pending; not operationally complete.
 
 Deliver:
 
@@ -2231,7 +2232,16 @@ No images or secrets are generated; no registry is contacted.
 `ghcr.io/andresz74/verilio-gateway`, with exact immutable Git release tags and `linux/amd64` only.
 The non-secret contract is [`deploy/official-images.env`](../deploy/official-images.env).
 OCI source/version/full-revision requirements and public/anonymous-pull intent are documented;
-images have not been published. D04–D11 remain planned.
+images have not been published.
+
+**D04 — publishing mechanism implemented; first real official tagged publication pending:**
+[issue #31](https://github.com/andresz74/verilio/issues/31). The tag-push/manual workflow qualifies
+exact tagged source and the existing archive release before GHCR login. It builds once, tags the
+same tested local image objects, refuses existing/partial remote tags, verifies metadata and
+anonymous access after logout, and records refs/digests/source/platform in the job summary.
+Offline mocked helper and structural workflow tests cover the mechanism. D04 becomes operationally
+complete only after the first real official tagged publication passes anonymous verification.
+D05–D11 remain planned; no clean-host registry install or available official images are claimed.
 
 D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes
 registry identity and release eligibility before D04 publishing. Each slice uses one issue,
