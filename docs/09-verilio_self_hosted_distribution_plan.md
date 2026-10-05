@@ -270,14 +270,15 @@ VERILIO_OFFICIAL_PLATFORM=linux/amd64
 ```
 
 It contains only plain literal assignments, no release version, credentials, or interpolation.
-Future D04/D05 wrappers may consume it; the D02 exporter stays registry-neutral and accepts
-repositories as arguments. Current runtime env defaults remain `verilio-api` and
+The D04 publishing helper consumes it; future D05 wrappers may also consume it. The D02 exporter
+stays registry-neutral and accepts repositories as arguments. Current runtime env defaults remain `verilio-api` and
 `verilio-gateway` for the existing local/archive/source workflows.
 
 Official GHCR packages are intended to be **public**, so released self-hosters can pull without
 GitHub authentication. This records visibility intent only; no package is published and no
 visibility setting is changed by D03. Official images and a working registry installation are
-not delivered yet. D04 publishing and D05 clean-host validation remain planned.
+not delivered yet. D04 has a publishing mechanism but its first real tagged publication is
+pending; D05 clean-host validation remains planned.
 
 ## 8.2 Version and Release Eligibility
 
@@ -298,8 +299,23 @@ private snapshots remain separate, local/source-based artifacts.
 
 D04 publishing must require an explicit non-latest release version, a matching immutable Git
 tag on the exact tagged source commit, clean source, and full official release qualification.
-The existing official source/disposable-production release gate remains authoritative; D03
-records these eligibility rules without implementing a publishing path or bypassing that gate.
+The existing official source/disposable-production release gate remains authoritative. D04
+implements it in [publish-images.yml](../.github/workflows/publish-images.yml): exact tag checkout,
+frozen install, development PostgreSQL health, migration/generation with clean-source verification,
+lint/typecheck/unit/integration/E2E/deployment tests and build, then the existing build-release,
+test-release and export-release scripts. Development PostgreSQL is cleaned up even on failure.
+GHCR login uses only `GITHUB_TOKEN` and occurs after all qualification; the helper never builds
+or logs in. Pre-gate local image IDs are checked again before tagging those exact objects.
+
+[`publish-release-images.sh`](../deploy/publish-release-images.sh) accepts one explicit version,
+consumes the D03 contract, and checks tagged clean canonical source plus local platform/OCI labels.
+If both remote tags exist it refuses immutable republication; if one exists it reports partial
+state for manual inspection. Registry/authentication uncertainty also fails before push. Only the
+two exact release refs are pushed. After remote digest/config/OCI verification it logs out and
+inspects both tags with an empty Docker credential configuration. Anonymous failure fails the job
+with package-visibility guidance; no automatic visibility change or image deletion occurs. The
+Actions summary records version, full source SHA, platform, refs, digests and each anonymous result.
+A partial failed publication requires explicit operator recovery; retry never overwrites tags.
 
 ## 8.3 OCI Metadata Contract
 
@@ -315,8 +331,9 @@ The existing [`deploy/Dockerfile`](../deploy/Dockerfile) already labels both API
 with version and revision (plus title), using `VERILIO_VERSION` and `VCS_REF` build arguments.
 [`build-release.sh`](../deploy/build-release.sh) supplies the explicit version and full commit.
 Reuse those existing labels; do not introduce a second version/revision metadata mechanism.
-The source label is not present yet: D04 must add it through the existing Dockerfile LABEL
-mechanism when publishing is implemented. D03 does not change image builds or add duplicate labels.
+D04 adds the canonical source label to both runtime stages through this same LABEL mechanism.
+Remote verification also compares the published manifest config digest with the tested local
+image ID, preserving the build-once identity through publication.
 
 ## 8.4 Platform Contract
 
@@ -767,7 +784,8 @@ not prove registry pulls, registry-backed provenance, or a clean-host registry i
 
 ## D2 — Official Image Publishing
 
-**Status:** Planned.
+**Status:** In progress. D03 contract complete; D04 publishing mechanism implemented. First real
+official tagged publication and anonymous verification remain pending; not operationally complete.
 
 Deliver:
 
@@ -857,7 +875,17 @@ No images or secrets are generated; no registry is contacted.
 `ghcr.io/andresz74/verilio-gateway`, with exact immutable Git release tags and `linux/amd64` only.
 The non-secret contract is [`deploy/official-images.env`](../deploy/official-images.env).
 OCI source/version/full-revision requirements and public/anonymous-pull intent are documented;
-images have not been published. D04–D11 remain planned.
+images have not been published.
+
+**D04 — publishing mechanism implemented; first real official tagged publication pending:**
+[issue #31](https://github.com/andresz74/verilio/issues/31) /
+[PR #32](https://github.com/andresz74/verilio/pull/32). The tag-push/manual workflow qualifies
+exact tagged source and the existing archive release before GHCR login. It builds once, tags the
+same tested local image objects, refuses existing/partial remote tags, verifies metadata and
+anonymous access after logout, and records refs/digests/source/platform in the job summary.
+Offline mocked helper and structural workflow tests cover the mechanism. D04 becomes operationally
+complete only after the first real official tagged publication passes anonymous verification.
+D05–D11 remain planned; no clean-host registry install or available official images are claimed.
 
 D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes
 registry identity and release eligibility before D04 publishing. Each slice uses one issue,
