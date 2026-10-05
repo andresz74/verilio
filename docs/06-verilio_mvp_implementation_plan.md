@@ -2223,6 +2223,16 @@ D11  Evaluate SBOM/signing and multi-arch publishing
 **D02 — COMPLETE:** [issue #27](https://github.com/andresz74/verilio/issues/27) /
 [PR #28](https://github.com/andresz74/verilio/pull/28). The package generator copies canonical Compose, writes explicit
 repository/version configuration with portable secret paths, and includes runtime support files.
-No images or secrets are generated; no registry is contacted. D03–D11 remain planned.
-D02 consumes the canonical runtime, not a second production Compose stack. D03 defines the still-unselected GHCR namespace
-and naming contract before D04 publishing. Each slice uses one issue, one branch, and one PR.
+No images or secrets are generated; no registry is contacted.
+
+**D03 — COMPLETE:** [issue #29](https://github.com/andresz74/verilio/issues/29) /
+[PR #30](https://github.com/andresz74/verilio/pull/30). The official repositories are
+`ghcr.io/andresz74/verilio-api` and
+`ghcr.io/andresz74/verilio-gateway`, with exact immutable Git release tags and `linux/amd64` only.
+The non-secret contract is [`deploy/official-images.env`](../deploy/official-images.env).
+OCI source/version/full-revision requirements and public/anonymous-pull intent are documented;
+images have not been published. D04–D11 remain planned.
+
+D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes
+registry identity and release eligibility before D04 publishing. Each slice uses one issue,
+one branch, and one PR.
