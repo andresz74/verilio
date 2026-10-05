@@ -6,7 +6,7 @@
 **Document:** MVP Implementation Plan  
 **File:** `docs/06-verilio_mvp_implementation_plan.md`  
 **Status:** Draft v0.1; core MVP complete, distribution workstream active\
-**Distribution revision:** 2026-10-04\
+**Distribution revision:** 2026-10-05\
 **Depends on:**
 
 - `docs/01-verilio_product_requirements_document.md`
@@ -2143,8 +2143,10 @@ not prove registry pulls, registry-backed provenance, or a clean-host registry i
 
 ## D2 — Official Image Publishing
 
-**Status:** In progress. D03 contract complete; D04 publishing mechanism implemented. First real
-official tagged publication and anonymous verification remain pending; not operationally complete.
+**Status:** Complete for the initial `linux/amd64` official publishing path. D03 defined the
+contract; D04 successfully published the exact tested images for `v0.1.1-alpha.5` using immutable
+tags, verified OCI metadata, and verified anonymous access. D05 clean-host installation remains
+planned; this does not establish platform, ARM64/multi-architecture, or public Internet support.
 
 Deliver:
 
@@ -2232,17 +2234,29 @@ No images or secrets are generated; no registry is contacted.
 `ghcr.io/andresz74/verilio-gateway`, with exact immutable Git release tags and `linux/amd64` only.
 The non-secret contract is [`deploy/official-images.env`](../deploy/official-images.env).
 OCI source/version/full-revision requirements and public/anonymous-pull intent are documented;
-images have not been published.
+the first official images were published and anonymously verified under D04 below.
 
-**D04 — publishing mechanism implemented; first real official tagged publication pending:**
-[issue #31](https://github.com/andresz74/verilio/issues/31) /
-[PR #32](https://github.com/andresz74/verilio/pull/32). The tag-push/manual workflow qualifies
-exact tagged source and the existing archive release before GHCR login. It builds once, tags the
-same tested local image objects, refuses existing/partial remote tags, verifies metadata and
-anonymous access after logout, and records refs/digests/source/platform in the job summary.
-Offline mocked helper and structural workflow tests cover the mechanism. D04 becomes operationally
-complete only after the first real official tagged publication passes anonymous verification.
-D05–D11 remain planned; no clean-host registry install or available official images are claimed.
+**D04 — COMPLETE:** Implementation: [issue #31](https://github.com/andresz74/verilio/issues/31) /
+[PR #32](https://github.com/andresz74/verilio/pull/32). First operational publication validation:
+[issue #33](https://github.com/andresz74/verilio/issues/33),
+[workflow run 37318991060](https://github.com/andresz74/verilio/actions/runs/37318991060).
+The qualification workflow published the same tested local image objects using immutable release
+tags, verified OCI source/version/revision metadata and digests, and verified anonymous access.
+
+- Release: `v0.1.1-alpha.5`.
+- Source commit: `db222d2446a1f12b5e29059665a6db7f2b4d1783`.
+- Platform: `linux/amd64`.
+- API: `ghcr.io/andresz74/verilio-api:v0.1.1-alpha.5`.
+- API digest: `sha256:9d76436b4dd86cbca0b8a53cfe42be7554878b7e98d69298cee568364e1450e6`.
+- Anonymous API verification: **passed**.
+- Gateway: `ghcr.io/andresz74/verilio-gateway:v0.1.1-alpha.5`.
+- Gateway digest: `sha256:dcb455a392453ac5e6514bb6a1047095df49612263e25cbe9724494ef21fceb8`.
+- Anonymous Gateway verification: **passed**.
+
+`v0.1.1-alpha.4` remains an untouched failed pre-publication qualification attempt, not a
+published image release. D05 is next and remains planned; D05–D11 are not complete. Published
+images do not establish clean-host installation, platform compatibility, ARM64/multi-architecture
+support, or public Internet readiness.
 
 D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes
 registry identity and release eligibility before D04 publishing. Each slice uses one issue,
