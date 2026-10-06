@@ -69,6 +69,9 @@ pass 'exact package tree exists with no generated secrets or credentials'
 cmp "$repo_root/compose.prod.yml" "$package_dir/compose.yml" || fail 'canonical Compose diverged'
 pass 'Compose copy is byte-for-byte canonical'
 
+cmp "$repo_root/deploy/SELF_HOSTING.md" "$package_dir/SELF_HOSTING.md" || fail 'self-host guide diverged'
+pass 'standalone guide is copied byte-for-byte, including official registry documentation'
+
 node - "$package_dir/verilio.env.example" "$version" "$api_repository" "$gateway_repository" <<'NODE'
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -161,10 +164,12 @@ pass 'existing dangling symlink target is refused'
 
 if grep -R -E ':latest|VERILIO_VERSION=latest' "$package_dir"; then fail 'latest default in package'; fi
 pass 'no package file defaults to latest'
-if grep -R -E 'ghcr[.]io' "$package_dir" "$repo_root/deploy/SELF_HOSTING.md" "$exporter"; then
-  fail 'registry namespace introduced in package/template'
+# The guide may document official images; repository selection must stay generic.
+# Exact caller repositories in the generated env and resolved images are checked above.
+if grep -E 'ghcr[.]io' "$exporter" "$repo_root/compose.prod.yml"; then
+  fail 'registry namespace hard-coded in exporter/canonical runtime'
 fi
-pass 'package and templates remain registry-neutral'
+pass 'exporter and canonical runtime remain registry-neutral'
 
 for repository in 'registry/foo:tag/bar' 'api/' 'api//path' 'api:tag' 'api@sha256:digest' 'api name' 'api#comment' 'api${OVERRIDE}' $'api\nINJECTED=value'; do
   reject "$version" "$repository" "$gateway_repository" "$work_root/invalid"
