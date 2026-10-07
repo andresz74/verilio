@@ -13,3 +13,4 @@ psql \
 CREATE ROLE :"app_user" WITH LOGIN PASSWORD :'app_password';
 CREATE DATABASE :"app_database" OWNER :"app_user";
 SQL
+

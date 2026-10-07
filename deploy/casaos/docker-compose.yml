@@ -180,7 +180,7 @@ x-casaos:
   architectures:
     - amd64
   version: "0.1.1-alpha.5"
-  update_at: "2026-10-06"
+  update_at: "2026-10-07"
   repo: https://github.com/andresz74/verilio
   support: https://github.com/andresz74/verilio/issues
   docs: https://github.com/andresz74/verilio/blob/main/deploy/casaos/README.md

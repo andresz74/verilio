@@ -2309,11 +2309,11 @@ and the immutable alpha.5 API/Gateway images with `postgres:17.9-alpine`.
 - Only Gateway published at `192.168.56.2:8080`; NAT `10.0.2.15:8080` refused connections,
   API/PostgreSQL were unpublished, and the init-script bind had `RW=false`.
 - Business Settings validation data survived refresh, CasaOS stop/start, real Gateway
-  recreation (`d727a43cb960` → `96366d31390e`), host reboot and uninstall/reinstall.
+  recreation (Gateway container ID changed), host reboot and uninstall/reinstall.
 - Uninstall with userdata deletion **unchecked** removed containers/app definition while
   protected config/secret/support hashes and PostgreSQL state survived. Reinstall without
-  rerunning bootstrap recovered the original data and owner
-  `7e35e88b-8947-4f89-88ea-6882debe4850`.
+  rerunning bootstrap recovered the original data and preserved the same stable
+  `LOCAL_USER_ID`.
 
 D08–D11 remain planned. Cross-version CasaOS upgrade validation remains pending.
 This is not one-click or universal CasaOS compatibility; it does not establish Portainer,

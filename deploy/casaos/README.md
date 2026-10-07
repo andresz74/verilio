@@ -23,11 +23,11 @@ Gateway published only at `192.168.56.2:8080`; NAT `10.0.2.15:8080` refused conn
 API/PostgreSQL had no published ports, and the init bind had `RW=false`.
 
 Business Settings validation data survived refresh, CasaOS stop/start, real Gateway
-recreation (`d727a43cb960` → `96366d31390e`), host reboot and same-version reinstall.
+recreation (Gateway container ID changed), host reboot and same-version reinstall.
 Uninstall with userdata deletion **unchecked** removed containers/app definition but
 preserved PostgreSQL data and protected config/secret/support hashes. Reinstall **without
-rerunning bootstrap** recovered the original data and unchanged owner
-`7e35e88b-8947-4f89-88ea-6882debe4850`. Cross-version CasaOS upgrades remain unvalidated.
+rerunning bootstrap** recovered the original data and preserved the same stable
+`LOCAL_USER_ID`. Cross-version CasaOS upgrades remain unvalidated.
 
 The package includes three CasaOS v0.4.15 normalization adaptations: string-valued
 `API_PORT: "3000"` avoids numeric environment parsing failures; migrate `on-failure`
@@ -177,6 +177,7 @@ backup or publish recovery archives.
 
 ```bash
 set -euo pipefail
+app_compose=/var/lib/casaos/apps/verilio-casaos/docker-compose.yml
 umask 077
 backup_dir="$HOME/verilio-backups/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$backup_dir"
