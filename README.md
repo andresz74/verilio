@@ -28,6 +28,7 @@ does not imply public SaaS readiness.
 | --- | --- | --- |
 | [Local development / evaluation](#local-quick-start) | Run locally as a reviewer or developer; multi-step setup. | Node.js 22+, pnpm 9, Docker Compose or PostgreSQL 17. |
 | [Prebuilt private self-host](deploy/SELF_HOSTING.md) | Install the validated private `linux/amd64` path using official GHCR images. | Docker Engine + Compose and standard shell utilities; no runtime Node/pnpm/source builds. Package generated on a separate trusted preparation machine. |
+| [CasaOS private package](deploy/casaos/README.md) | CasaOS v0.4.15 compatibility validated on the tested private Debian 12 `linux/amd64` environment. | Required root/sudo bootstrap and trusted-private-interface configuration; not one-click. Cross-version CasaOS upgrades remain unvalidated. |
 | [Private-alpha snapshot](#private-alpha-deployment) | Update an already-configured private host from exact fetched `origin/main`. | Git, local Docker with buildx/Compose, deployment-user permissions, and existing host configuration. Not a fresh-server installer. |
 | [Official tagged release](#official-release-workflow) | Build/test/export a strict immutable release off-host. | Clean tagged source and full release gate on the build machine; Docker Compose on the runtime destination. |
 

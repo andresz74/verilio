@@ -6,7 +6,7 @@
 **Document:** MVP Implementation Plan  
 **File:** `docs/06-verilio_mvp_implementation_plan.md`  
 **Status:** Draft v0.1; core MVP complete, distribution workstream active\
-**Distribution revision:** 2026-10-05\
+**Distribution revision:** 2026-10-07\
 **Depends on:**
 
 - `docs/01-verilio_product_requirements_document.md`
@@ -2176,7 +2176,9 @@ Deliver:
 
 ## D4 — Platform Compatibility
 
-**Status:** Planned.
+**Status:** In progress; D07 complete for the tested private CasaOS v0.4.15 / Debian 12
+`linux/amd64` path with required bootstrap and trusted-private-interface configuration.
+D08–D11 remain planned; cross-version CasaOS upgrade validation remains pending.
 
 Order:
 
@@ -2290,10 +2292,33 @@ install/health/first use/logs, logical backup and restore, target-package update
 rollback, safe removal and troubleshooting. README links the validated prebuilt path.
 D02 + D05 + D06 complete D3 for the initial `linux/amd64` generated-package path; downloadable
 release assets, cross-version upgrade qualification and registry-backed package provenance are
-not implied. D07–D11 remain planned; D07 has not started.
+not implied.
 
-This single-host validation does not establish CasaOS, Portainer,
-Proxmox, ARM64/multi-architecture, upgrade/restore qualification, or public Internet readiness.
+**D07 — COMPLETE:** [issue #43](https://github.com/andresz74/verilio/issues/43).
+CasaOS v0.4.15 compatibility validated on the tested private Debian 12 `linux/amd64`
+environment with required bootstrap and trusted-private-interface configuration.
+The [CasaOS package](../deploy/casaos/README.md) uses Docker Engine 29.8.2 / Compose v5.6.0
+and the immutable alpha.5 API/Gateway images with `postgres:17.9-alpine`.
+
+- Protected bind state at `/DATA/VerilioState` keeps owner/config, file-backed secrets,
+  PostgreSQL data and canonical init support outside CasaOS-owned app state.
+- CasaOS adaptations preserve string `API_PORT`, one-shot migrate `on-failure`, and a
+  long-syntax read-only init bind; generic `compose.prod.yml` is unchanged/private-safe.
+- PostgreSQL/API/Gateway healthy; migrate exited 0; liveness returned 200 and readiness
+  reported database connected. The CasaOS dashboard tile launched Verilio successfully.
+- Only Gateway published at `192.168.56.2:8080`; NAT `10.0.2.15:8080` refused connections,
+  API/PostgreSQL were unpublished, and the init-script bind had `RW=false`.
+- Business Settings validation data survived refresh, CasaOS stop/start, real Gateway
+  recreation (`d727a43cb960` → `96366d31390e`), host reboot and uninstall/reinstall.
+- Uninstall with userdata deletion **unchecked** removed containers/app definition while
+  protected config/secret/support hashes and PostgreSQL state survived. Reinstall without
+  rerunning bootstrap recovered the original data and owner
+  `7e35e88b-8947-4f89-88ea-6882debe4850`.
+
+D08–D11 remain planned. Cross-version CasaOS upgrade validation remains pending.
+This is not one-click or universal CasaOS compatibility; it does not establish Portainer,
+Proxmox, ARM64/multi-architecture, cross-version upgrade/restore qualification, or public
+Internet readiness.
 
 D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes
 registry identity and release eligibility before D04 publishing. Each slice uses one issue,
