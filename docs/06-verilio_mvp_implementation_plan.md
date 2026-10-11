@@ -6,7 +6,7 @@
 **Document:** MVP Implementation Plan  
 **File:** `docs/06-verilio_mvp_implementation_plan.md`  
 **Status:** Draft v0.1; core MVP complete, distribution workstream active\
-**Distribution revision:** 2026-10-07\
+**Distribution revision:** 2026-10-11\
 **Depends on:**
 
 - `docs/01-verilio_product_requirements_document.md`
@@ -2178,7 +2178,9 @@ Deliver:
 
 **Status:** In progress; D07 complete for the tested private CasaOS v0.4.15 / Debian 12
 `linux/amd64` path with required bootstrap and trusted-private-interface configuration.
-D08–D11 remain planned; cross-version CasaOS upgrade validation remains pending.
+D08 is complete for the tested private Portainer CE 2.45.1 Docker Standalone path
+with required bootstrap, explicit environment, private-IP binding and host boot readiness.
+D09–D11 remain planned; cross-version CasaOS/Portainer upgrade validation remains pending.
 
 Order:
 
@@ -2315,10 +2317,45 @@ and the immutable alpha.5 API/Gateway images with `postgres:17.9-alpine`.
   rerunning bootstrap recovered the original data and preserved the same stable
   `LOCAL_USER_ID`.
 
-D08–D11 remain planned. Cross-version CasaOS upgrade validation remains pending.
-This is not one-click or universal CasaOS compatibility; it does not establish Portainer,
+D09–D11 remain planned. Cross-version CasaOS upgrade validation remains pending.
+This is not one-click or universal CasaOS compatibility; D07 alone does not establish Portainer,
 Proxmox, ARM64/multi-architecture, cross-version upgrade/restore qualification, or public
 Internet readiness.
+
+**D08 — COMPLETE** — [issue #47](https://github.com/andresz74/verilio/issues/47).
+Portainer CE 2.45.1 (embedded Docker Compose 2.40.3) Docker Standalone compatibility
+validated on the tested private Debian 12 `linux/amd64` environment with Docker Engine
+29.8.1. The host Docker Compose plugin v5.6.0 was used only for local package/config
+validation and is not a Portainer stack-runtime requirement. Validation required bootstrap,
+explicit stack environment variables, trusted-private-interface Gateway binding, and host networking that makes the selected private address available
+before Docker container restore. See the [Portainer guide](../deploy/portainer/README.md).
+
+- Protected state at `/var/lib/verilio-portainer` preserves the same stable `LOCAL_USER_ID`,
+  file-backed secrets, PostgreSQL bind data and canonical initializer outside stack files.
+- PostgreSQL/API/Gateway healthy; migrate exited 0; live returned 200 and readiness reported
+  database connected. Secret and initializer mounts were read-only.
+- Gateway alone published at `192.168.56.3:8080`; NAT `10.0.2.15:8080` refused connections;
+  API/PostgreSQL remained unpublished.
+- Business Settings survived refresh, Portainer Stop/Start, a real Gateway recreate
+  (container ID changed), corrected host reboot, and stack deletion/recreation without
+  rerunning bootstrap or regenerating owner/secrets.
+- Initial reboot failed because the selected private DHCP address was not ready when
+  Docker restored specific-IP binds. The tested Debian ifupdown fix made the private
+  interface boot-managed rather than `allow-hotplug`. Affected containers required
+  recreation after the address became available; the second reboot passed. This is a
+  host prerequisite, not a reason to broaden ingress or universal network-manager advice.
+
+Verified images/digests:
+
+| Image | Digest |
+| --- | --- |
+| `ghcr.io/andresz74/verilio-api:v0.1.1-alpha.5` | `sha256:9d76436b4dd86cbca0b8a53cfe42be7554878b7e98d69298cee568364e1450e6` |
+| `ghcr.io/andresz74/verilio-gateway:v0.1.1-alpha.5` | `sha256:dcb455a392453ac5e6514bb6a1047095df49612263e25cbe9724494ef21fceb8` |
+| `postgres:17.9-alpine` | `sha256:c7526c0f6c3f30260a563d7bcf8ad778effac59a44f8ffa86678c35418338609` |
+
+Only same-version alpha.5 Docker Standalone lifecycle is validated. Cross-version upgrades
+remain pending; no universal Portainer, Swarm, Kubernetes, Edge Stack, Business Edition-specific,
+ARM64 or public Internet readiness claim is made. D09–D11 remain planned.
 
 D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes
 registry identity and release eligibility before D04 publishing. Each slice uses one issue,
