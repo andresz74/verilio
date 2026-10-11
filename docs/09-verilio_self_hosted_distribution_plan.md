@@ -692,8 +692,9 @@ validation remains pending; ARM64 and public Internet exposure are unsupported.
 
 ## 19.4 Portainer
 
-Portainer CE 2.45.1 Docker Standalone is validated on private Debian 12 `linux/amd64`
-with Docker Engine 29.8.1 / host Compose v5.6.0, required bootstrap, explicit Stack variables,
+Portainer CE 2.45.1 (embedded Docker Compose 2.40.3) Docker Standalone is validated on
+private Debian 12 `linux/amd64` with Docker Engine 29.8.1, required bootstrap,
+explicit Stack variables,
 trusted-private-IP Gateway binding and address readiness before Docker container restore.
 See the [Portainer guide](../deploy/portainer/README.md) for the tested host prerequisite
 and lifecycle/recovery record. Cross-version upgrades remain pending; this establishes no
@@ -985,10 +986,11 @@ Proxmox, ARM64/multi-architecture, cross-version upgrade/restore qualification, 
 Internet readiness.
 
 **D08 — COMPLETE** — [issue #47](https://github.com/andresz74/verilio/issues/47).
-Portainer CE 2.45.1 Docker Standalone compatibility validated on the tested private
-Debian 12 `linux/amd64` environment with Docker Engine 29.8.1 / host Compose v5.6.0,
-required bootstrap, explicit stack environment variables, trusted-private-interface
-Gateway binding, and host networking that makes the selected private address available
+Portainer CE 2.45.1 (embedded Docker Compose 2.40.3) Docker Standalone compatibility
+validated on the tested private Debian 12 `linux/amd64` environment with Docker Engine
+29.8.1. The host Docker Compose plugin v5.6.0 was used only for local package/config
+validation and is not a Portainer stack-runtime requirement. Validation required bootstrap,
+explicit stack environment variables, trusted-private-interface Gateway binding, and host networking that makes the selected private address available
 before Docker container restore. See the [Portainer guide](../deploy/portainer/README.md).
 
 - Protected state at `/var/lib/verilio-portainer` preserves the same stable `LOCAL_USER_ID`,

@@ -5,10 +5,13 @@ It targets a private `linux/amd64` Docker Standalone environment. It is not a
 one-click install, a Swarm/Kubernetes/Edge Stack package, or a Business
 Edition-specific Git-relative-path deployment.
 
-D08 is complete for Portainer CE 2.45.1 Docker Standalone on the tested private
-Debian 12 linux/amd64 host with Docker Engine 29.8.1 and host Docker Compose
-plugin v5.6.0. Validation required bootstrap, explicit Stack variables,
-trusted-private-interface Gateway binding and host networking that makes the
+D08 is complete for Portainer CE 2.45.1 (embedded Docker Compose 2.40.3)
+Docker Standalone on the tested private Debian 12 linux/amd64 host with Docker
+Engine 29.8.1. The host Docker Compose plugin v5.6.0 was present only for local
+package/config validation; it did not execute the Portainer Web-editor stack and
+is not a Portainer stack-runtime requirement. Validation required bootstrap,
+explicit Stack variables, trusted-private-interface Gateway binding and host
+networking that makes the
 selected private address available before Docker container restore.
 
 ## Private-network boundary
