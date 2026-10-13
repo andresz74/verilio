@@ -16,6 +16,10 @@ check 'test Bash syntax' bash -n "${BASH_SOURCE[0]}"
 # Source functions only: importing never invokes privileged main operations.
 source "$repo_root/deploy/install-from-source.sh"
 source "$repo_root/deploy/bootstrap-source-state.sh"
+check 'default source workspace is /var/tmp' env -u VERILIO_SOURCE_INSTALL_WORK_ROOT bash -c 'source "$1"; [[ "$work_root" == /var/tmp ]]' sh "$repo_root/deploy/install-from-source.sh"
+mkdir "$work/workspace" "$work/docker-root"
+check 'custom source workspace honored' env VERILIO_SOURCE_INSTALL_WORK_ROOT="$work/workspace" bash -c 'source "$1"; [[ "$work_root" == "$2" ]]' sh "$repo_root/deploy/install-from-source.sh" "$work/workspace"
+work_root="$work/workspace"
 parse_case() { ref=; port=8080; resume=false; parse_args "$@"; }
 check 'origin/main CLI accepted' parse_case --ref origin/main
 check 'default port is 8080' test "$port" = 8080
@@ -149,7 +153,7 @@ sudo() {
     *) echo "Unexpected mocked privilege boundary: $*" >&2; return 99 ;;
   esac
 }
-build_images() { echo build > "$MODEL/events"; }
+build_images() { echo build > "$MODEL/events"; printf '%s\n' "$scratch" > "$MODEL/scratch-path"; }
 verify_release() {
   echo verified >> "$MODEL/events"
   case "$DRIFT" in
@@ -163,7 +167,7 @@ installer_main --ref origin/main
 DRIVER
 for drift in head bootstrap untracked; do
   model="$work/model-$drift"; mkdir "$model"
-  if env REPO="$repo_root" FIXTURE="$source_dir" MODEL="$model" DRIFT="$drift" bash "$work/checkout-gate-driver.sh" > "$model/output" 2>&1; then fail "post-build $drift unexpectedly passed"; fi
+  if env VERILIO_SOURCE_INSTALL_WORK_ROOT="$work/workspace" REPO="$repo_root" FIXTURE="$source_dir" MODEL="$model" DRIFT="$drift" bash "$work/checkout-gate-driver.sh" > "$model/output" 2>&1; then fail "post-build $drift unexpectedly passed"; fi
   check "post-build $drift reached artifact verification" grep -q verified "$model/events"
   check "post-build $drift refuses at actual checkout gate" grep -q 'Installer .*changed' "$model/output"
   check "post-build $drift fails before persistent preparation" test ! -e "$model/persistent-mutation"
@@ -172,8 +176,9 @@ for drift in head bootstrap untracked; do
   rm -f "$source_dir/after-build-untracked"
 done
 model="$work/model-unchanged"; mkdir "$model"
-if env REPO="$repo_root" FIXTURE="$source_dir" MODEL="$model" DRIFT=unchanged bash "$work/checkout-gate-driver.sh" > "$model/output" 2>&1; then fail 'mock preparation boundary should return 42'; fi
+if env VERILIO_SOURCE_INSTALL_WORK_ROOT="$work/workspace" REPO="$repo_root" FIXTURE="$source_dir" MODEL="$model" DRIFT=unchanged bash "$work/checkout-gate-driver.sh" > "$model/output" 2>&1; then fail 'mock preparation boundary should return 42'; fi
 check 'unchanged post-build identity reaches preparation boundary' test -e "$model/persistent-mutation"
+check 'actual orchestration stages scratch under selected work root' bash -c '[[ $(cat "$1") == "$2"/verilio-source-install.* ]]' sh "$model/scratch-path" "$work_root"
 
 # Portable stat adapter for Linux production validation exercised on macOS CI.
 stat() {
@@ -244,14 +249,24 @@ check 'errors contain no passwords' bash -c '! grep -F -e "$1" -e "$2" "$3"' sh 
 # Host preflight: every system/privilege-sensitive operation is mocked.
 id() { [[ ${1:-} == -u ]] && echo "${fake_uid:-1000}"; }
 uname() { case "$1" in -s) echo Linux ;; -m) echo "${fake_arch:-x86_64}" ;; esac; }
-sudo() { if [[ ${1:-} == -v ]]; then return; fi; if [[ ${1:-} == df ]]; then echo 'Filesystem 1024-blocks Used Available Capacity Mounted'; echo "fake 99999999 0 ${fake_disk:-99999999} 0 /"; else "$@"; fi; }
+sudo() {
+  if [[ ${1:-} == -v ]]; then return; fi
+  if [[ ${1:-} == df ]]; then
+    printf '%s\n' "$3" >> "$work/disk-checks"
+    local space=${fake_disk:-99999999}
+    [[ "$3" != "$work_root" ]] || space=${fake_work_disk:-$space}
+    [[ "$3" != "${TMPDIR:-/tmp}" ]] || space=${fake_tmp_disk:-$space}
+    echo 'Filesystem 1024-blocks Used Available Capacity Mounted'
+    echo "fake 99999999 0 $space 0 /"
+  else "$@"; fi
+}
 free() { printf 'Mem: 10000000 0 0 0 0 %s\nSwap: 0 0 0\n' "${fake_mem:-9999999}"; }
 docker() {
   case "$*" in
     'context inspect --format '{{*) echo "${fake_endpoint:-unix:///var/run/docker.sock}" ;;
     'info --format {{.OSType}}/{{.Architecture}}') echo linux/amd64 ;;
     'info --format {{json .SecurityOptions}}') echo "${fake_security:-[]}" ;;
-    'info --format {{.DockerRootDir}}') echo /tmp ;;
+    'info --format {{.DockerRootDir}}') echo "$work/docker-root" ;;
     'info --format {{.ID}}') echo offline-daemon ;;
     'buildx version'|'compose version') return 0 ;;
     *) fail "unexpected offline Docker operation: $*" ;;
@@ -261,6 +276,21 @@ command() {
   if [[ ${1:-} == -v ]]; then [[ ${2:-} != "${missing_tool:-}" ]]; else builtin command "$@"; fi
 }
 check 'mock host preflight passes' preflight_host
+fake_work_disk=1; reject 'insufficient selected work-root space refused' preflight_host; unset fake_work_disk
+saved_work_root=$work_root
+ln -s "$saved_work_root" "$work/workspace-link"
+work_root="$work/workspace-link"; reject 'symlink work root refused' preflight_host
+work_root=relative; reject 'relative work root refused' preflight_host
+work_root="$work/missing-workspace"; reject 'nonexistent work root refused' preflight_host
+work_root=$saved_work_root
+chmod 0500 "$work_root"; reject 'non-writable work root refused' preflight_host; chmod 0700 "$work_root"
+saved_tmpdir=${TMPDIR-}; tmpdir_was_set=${TMPDIR+x}
+TMPDIR="$work/small-tmp"; mkdir "$TMPDIR"; fake_tmp_disk=1
+: > "$work/disk-checks"
+check 'small ordinary TMPDIR does not gate build space' preflight_host
+check 'TMPDIR is not inspected as build filesystem' bash -c '! grep -Fxq "$1" "$2"' sh "$TMPDIR" "$work/disk-checks"
+unset fake_tmp_disk
+if [[ "$tmpdir_was_set" == x ]]; then TMPDIR=$saved_tmpdir; else unset TMPDIR; fi
 fake_uid=0; reject 'root invocation refused' preflight_host; fake_uid=1000
 fake_arch=aarch64; reject 'unsupported architecture refused' preflight_host; fake_arch=x86_64
 DOCKER_HOST=tcp://remote; reject 'DOCKER_HOST refused' preflight_host; unset DOCKER_HOST

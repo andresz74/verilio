@@ -5,6 +5,7 @@ set +x
 umask 077
 
 source_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+work_root=${VERILIO_SOURCE_INSTALL_WORK_ROOT:-/var/tmp}
 release_root=/opt/verilio/releases
 current=/opt/verilio/current
 state_root=/etc/verilio
@@ -66,11 +67,14 @@ resolve_source() {
 }
 preflight_host() {
   [[ $(id -u) != 0 ]] || { fail 'Run as deployment user, not root.'; return 1; }
-  local tool
+  local tool physical_root
   for tool in bash git docker sudo openssl curl jq awk sed grep find sort xargs cmp stat install readlink tar gzip sha256sum free df mktemp ss uname id dirname mkdir mv cp chmod cat wc tr tee ln rmdir rm chown sh env; do
     command -v "$tool" >/dev/null || { fail "Missing prerequisite: $tool"; return 1; }
   done
   [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { fail 'Linux amd64 required.'; return 1; }
+  [[ "$work_root" == /* && -d "$work_root" && ! -L "$work_root" ]] || { fail 'Work root must be an existing absolute physical directory, not a symlink.'; return 1; }
+  physical_root=$(cd "$work_root" && pwd -P)
+  [[ ( "$work_root" == "$physical_root" || "$work_root" == "$physical_root/" ) && -w "$work_root" ]] || { fail 'Work root must be physical and writable by the deployment user.'; return 1; }
   [[ -z ${DOCKER_HOST:-} ]] || { fail 'DOCKER_HOST override refused.'; return 1; }
   [[ $(docker context inspect --format '{{.Endpoints.docker.Host}}') == unix://* ]] || { fail 'Local Unix Docker endpoint required.'; return 1; }
   [[ $(docker info --format '{{.OSType}}/{{.Architecture}}') =~ ^linux/(x86_64|amd64)$ ]] || return 1
@@ -84,7 +88,7 @@ preflight_host() {
   memory=$(free -k | awk '/^Mem:/ {available=$7} /^Swap:/ {print available+$4}')
   [[ "$memory" =~ ^[0-9]+$ ]] && ((memory >= 3*1024*1024)) || { fail 'Need 3 GiB available RAM + free swap.'; return 1; }
   docker_root=$(docker info --format '{{.DockerRootDir}}')
-  paths=("$source_dir" "${TMPDIR:-/tmp}" "$docker_root")
+  paths=("$source_dir" "$work_root" "$docker_root")
   for path in "$release_root" "$state_root" "$backup_root"; do
     parent=$path
     while ! sudo test -e "$parent"; do
@@ -343,7 +347,7 @@ installer_main() {
   sudo mkdir -m 0700 "$lock" || { fail 'Install lock exists; inspect, never steal it.'; return 1; }
   locked=true
   check_existing
-  scratch=$(mktemp -d)
+  scratch=$(mktemp -d "$work_root/verilio-source-install.XXXXXX")
   (umask 022; git -C "$source_dir" worktree add --detach "$scratch/source" "$commit")
   phase=build-export
   local staged

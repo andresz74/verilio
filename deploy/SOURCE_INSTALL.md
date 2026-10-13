@@ -39,8 +39,20 @@ Host Node/npm/pnpm, Vite, TypeScript and uuidgen are unnecessary. The Docker bui
 contains the source toolchain; **Buildx is required** for this source path.
 
 Admission checks reuse the snapshot updater's guards: **3 GiB combined available RAM plus
-free swap**, and **12 GiB free** on source, host install/config/backup and Docker filesystems.
+free swap**, and **12 GiB free** on the source checkout, source-install work-root, Docker
+and host install/config/backup filesystems.
 These are admission guards, **not universal hardware minimums or a build-success guarantee**.
+Source build/export staging defaults to `/var/tmp`. The work root must be an existing
+absolute physical directory (no symlink paths), writable by the deployment user, with the
+existing **12 GiB admission headroom**. This is a build workspace, not persistent Verilio
+state. `/tmp` itself does not need 12 GiB; small ordinary temporary files may still use it.
+To select another disk-backed workspace, create it first and run:
+
+```bash
+VERILIO_SOURCE_INSTALL_WORK_ROOT=/path/to/disk-backed/workspace \
+  ./deploy/install-from-source.sh --ref origin/main
+```
+
 Build/export staging can retain images and multiple compressed archives simultaneously.
 Inspect `free -h`, `df -h` and `docker system df`; provision sufficient additional headroom.
 The proposed lab allocation is 4 vCPU, 8 GiB RAM and 60 GiB disk, not a measured minimum.
