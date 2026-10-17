@@ -330,6 +330,26 @@ print_success() {
   printf 'Source installation complete: %s\nInstaller commit: %s\nSource commit: %s\nOwner: %s\nVolume: verilio_pgdata\nBaseline backup: %s\n' "$version" "$installer_commit" "$commit" "$(sudo sed -n 's/^LOCAL_USER_ID=//p' "$state_root/verilio.env")" "$1"
   print_handoff
 }
+# Keep sudo foreground: command substitution can stop Compose under sudo use_pty.
+complete_install() {
+  phase=baseline-backup
+  local backup_path_file="$scratch/baseline-backup.path"
+  local backup= line name count=0
+  sudo env VERILIO_ENV_FILE="$state_root/verilio.env" VERILIO_COMPOSE_FILE="$target/compose.prod.yml" "$target/deploy/backup.sh" "$version" predeploy > "$backup_path_file" || return "$?"
+  # Consume stdout only after the privileged command has exited successfully.
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    count=$((count + 1))
+    backup=$line
+  done < "$backup_path_file"
+  [[ "$count" == 1 && -n "$backup" ]] || { fail 'Baseline backup must report exactly one non-empty path line.'; return 1; }
+  name=${backup#"$backup_root/"}
+  # backup.sh creates one direct child; disallow traversal/nested/symlink paths.
+  [[ "$backup" == /* && "$backup" == "$backup_root/"* && "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { fail 'Baseline backup path is outside the expected backup root.'; return 1; }
+  sudo test -d "$backup" && sudo test ! -L "$backup" || { fail 'Baseline backup directory is missing or a symlink.'; return 1; }
+  sudo sh -c 'cd "$1" && sha256sum --check checksums.txt' sh "$backup" || return "$?"
+  write_receipt complete || return "$?"
+  print_success "$backup"
+}
 installer_main() {
   parse_args "$@"
   preflight_host
@@ -413,11 +433,6 @@ ENV
   phase=health-security
   check_config "$target" "$state_root/verilio.env"
   verify_runtime
-  phase=baseline-backup
-  local backup
-  backup=$(sudo env VERILIO_ENV_FILE="$state_root/verilio.env" VERILIO_COMPOSE_FILE="$target/compose.prod.yml" "$target/deploy/backup.sh" "$version" predeploy)
-  sudo sh -c 'cd "$1" && sha256sum --check checksums.txt' sh "$backup"
-  write_receipt complete
-  print_success "$backup"
+  complete_install
 }
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then installer_main "$@"; fi

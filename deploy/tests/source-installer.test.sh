@@ -566,5 +566,90 @@ for item in 'api:.State.Health.Status="unhealthy"' 'migrate:.State.ExitCode=1' '
   cp "$work/original.json" "$work/$service.json"
 done
 unset -f docker sudo curl
+# Baseline backup: run the real completion/EXIT flow, with only sudo/receipt I/O
+# mocked against disposable files. No PTY, privilege or Docker daemon is required.
+cat > "$work/backup-driver.sh" <<'DRIVER'
+#!/usr/bin/env bash
+set -euo pipefail
+source "$REPO/deploy/install-from-source.sh"
+scratch="$MODEL/scratch"
+backup_root="$MODEL/backups"
+receipt="$MODEL/receipt"
+state_root="$MODEL/state"
+target="$MODEL/release"
+lock="$MODEL/lock"
+installer_commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+commit=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+version=main-bbbbbbbbbbbb
+receipt_phase=runtime
+locked=true
+mkdir -p "$scratch" "$backup_root/accepted" "$state_root" "$target" "$lock" "$MODEL/outside"
+printf 'preserved runtime/state\n' > "$state_root/evidence"
+printf 'dump\n' > "$backup_root/accepted/database.dump"
+(cd "$backup_root/accepted" && sha256sum database.dump > checksums.txt)
+receipt_body pending > "$receipt"
+if [[ "$MODE" == checksum ]]; then printf 'corruption\n' >> "$backup_root/accepted/database.dump"; fi
+ln -s "$MODEL/outside" "$backup_root/link"
+sudo() {
+  case "$1" in
+    env)
+      [[ "$BASH_SUBSHELL" == 0 ]] || { echo 'Backup sudo entered a subshell' >&2; return 99; }
+      echo backup-foreground >> "$MODEL/events"
+      case "$MODE" in
+        failure) printf 'partial\n' > "$backup_root/partial-evidence"; printf '%s\n' "$backup_root/accepted"; return 73 ;;
+        empty) : ;;
+        multiline) printf '%s\n%s\n' "$backup_root/accepted" "$backup_root/accepted" ;;
+        blankline) printf '%s\n\n' "$backup_root/accepted" ;;
+        outside) printf '%s\n' "$MODEL/outside" ;;
+        traversal) printf '%s\n' "$backup_root/../outside" ;;
+        symlink) printf '%s\n' "$backup_root/link" ;;
+        missing) printf '%s\n' "$backup_root/missing" ;;
+        success|checksum) printf '%s\n' "$backup_root/accepted" ;;
+        *) return 99 ;;
+      esac
+      echo backup-exited >> "$MODEL/events" ;;
+    test) echo path-check >> "$MODEL/events"; "$@" ;;
+    sh) echo checksums >> "$MODEL/events"; "$@" ;;
+    rmdir) "$@" ;;
+    *) echo "Unexpected offline sudo: $*" >&2; return 99 ;;
+  esac
+}
+write_receipt() { echo "$1" >> "$MODEL/events"; receipt_body "$1" > "$receipt"; }
+print_success() { echo success >> "$MODEL/events"; printf 'Accepted backup: %s\n' "$1"; }
+trap cleanup EXIT
+complete_install
+DRIVER
+# Verify the privileged backup invocation itself is a direct command, without
+# command substitution, backgrounding or a pipe (redirection is intentional).
+check 'baseline sudo backup is structurally direct foreground' python3 - "$repo_root/deploy/install-from-source.sh" <<'PYTEST'
+import sys
+s = open(sys.argv[1]).read()
+lines = [line.strip() for line in s.splitlines() if '"$target/deploy/backup.sh"' in line]
+assert len(lines) == 1
+line = lines[0]
+assert line.startswith('sudo env ')
+command, guard = line.split(' || ')
+assert '$(' not in command and '`' not in command and '|' not in command and '&' not in command
+assert '> "$backup_path_file"' in command
+assert guard == 'return "$?"'
+body = s[s.index('complete_install() {'):s.index('installer_main() {')]
+assert body.index(line) < body.index('while IFS= read') < body.index('write_receipt complete')
+PYTEST
+for mode in failure empty multiline blankline outside traversal symlink missing checksum; do
+  model="$work/backup-$mode"; mkdir "$model"
+  if env REPO="$repo_root" MODEL="$model" MODE="$mode" bash "$work/backup-driver.sh" > "$model/output" 2>&1; then fail "baseline backup $mode unexpectedly accepted"; fi
+  pass "baseline backup $mode refuses completion"
+  check "baseline backup $mode preserves pending runtime receipt" bash -c 'grep -Fxq status=pending "$1" && grep -Fxq phase=runtime "$1"' sh "$model/receipt"
+  check "baseline backup $mode cleans lock and preserves state/release" bash -c '[[ ! -e "$1/lock" && -d "$1/release" && $(cat "$1/state/evidence") == "preserved runtime/state" ]]' sh "$model"
+done
+model="$work/backup-failure"
+check 'failed privileged backup output is not consumed/verified' bash -c '! grep -Eq "^(path-check|checksums|complete|success)$" "$1"' sh "$model/events"
+check 'failed backup partial artifact remains for investigation' test -f "$model/backups/partial-evidence"
+check 'checksum failure reaches verification before refusal' grep -Fxq checksums "$work/backup-checksum/events"
+model="$work/backup-success"; mkdir "$model"
+check 'accepted baseline backup completes foreground flow' env REPO="$repo_root" MODEL="$model" MODE=success bash "$work/backup-driver.sh"
+printf '%s\n' backup-foreground backup-exited path-check path-check checksums complete success > "$work/backup-expected-events"
+check 'complete receipt follows accepted backup/checksums only' bash -c 'grep -Fxq status=complete "$1/receipt" && cmp -s "$1/events" "$2"' sh "$model" "$work/backup-expected-events"
+check 'successful backup also releases ephemeral lock' test ! -e "$model/lock"
 check 'canonical Compose unchanged against main' git diff --exit-code main -- "$repo_root/compose.prod.yml"
 echo "$passed source installer tests passed."
