@@ -301,6 +301,8 @@ fake_disk=1; reject 'disk admission guard' preflight_host; unset fake_disk
 # Missing dependency is isolated with a mocked command builtin check.
 missing_tool=openssl
 reject 'missing prerequisite fails preflight' preflight_host
+missing_tool=setsid
+reject 'missing setsid fails preflight' preflight_host
 unset missing_tool
 unset -f command
 
@@ -573,6 +575,7 @@ cat > "$work/backup-driver.sh" <<'DRIVER'
 set -euo pipefail
 source "$REPO/deploy/install-from-source.sh"
 scratch="$MODEL/scratch"
+work_root=$MODEL
 backup_root="$MODEL/backups"
 receipt="$MODEL/receipt"
 state_root="$MODEL/state"
@@ -592,11 +595,14 @@ if [[ "$MODE" == checksum ]]; then printf 'corruption\n' >> "$backup_root/accept
 ln -s "$MODEL/outside" "$backup_root/link"
 sudo() {
   case "$1" in
-    env)
+    -n)
+      [[ "$2 $3 $4" == 'setsid --wait env' ]] || return 98
+      [[ ! -t 0 && $(cat) == "" ]] || return 97
+      echo stdin-eof >> "$MODEL/events"
       [[ "$BASH_SUBSHELL" == 0 ]] || { echo 'Backup sudo entered a subshell' >&2; return 99; }
       echo backup-foreground >> "$MODEL/events"
       case "$MODE" in
-        failure) printf 'partial\n' > "$backup_root/partial-evidence"; printf '%s\n' "$backup_root/accepted"; return 73 ;;
+        failure) printf 'PRIVATE-DIAGNOSTIC\n' >&2; printf 'partial\n' > "$backup_root/partial-evidence"; printf '%s\n' "$backup_root/accepted"; return 73 ;;
         empty) : ;;
         multiline) printf '%s\n%s\n' "$backup_root/accepted" "$backup_root/accepted" ;;
         blankline) printf '%s\n\n' "$backup_root/accepted" ;;
@@ -604,6 +610,7 @@ sudo() {
         traversal) printf '%s\n' "$backup_root/../outside" ;;
         symlink) printf '%s\n' "$backup_root/link" ;;
         missing) printf '%s\n' "$backup_root/missing" ;;
+        stderr) printf 'PRIVATE-DIAGNOSTIC\n' >&2; printf '%s\n' "$backup_root/accepted" ;;
         success|checksum) printf '%s\n' "$backup_root/accepted" ;;
         *) return 99 ;;
       esac
@@ -627,15 +634,22 @@ s = open(sys.argv[1]).read()
 lines = [line.strip() for line in s.splitlines() if '"$target/deploy/backup.sh"' in line]
 assert len(lines) == 1
 line = lines[0]
-assert line.startswith('sudo env ')
+assert line.startswith('sudo -n setsid --wait env ')
 command, guard = line.split(' || ')
 assert '$(' not in command and '`' not in command and '|' not in command and '&' not in command
-assert '> "$backup_path_file"' in command
-assert guard == 'return "$?"'
+assert '</dev/null' in command
+assert '>"$backup_path_file"' in command
+assert '2>"$backup_stderr_file"' in command
+assert guard == '{'
+assert 'local backup_path_file="$scratch/baseline-backup.path"' in s
+assert 'backup_stderr_file=$(mktemp "$work_root/verilio-source-install-backup-stderr.XXXXXX")' in s
+assert 'umask 077' in s
+assert 'sudo -v' in s
+assert 'sudo setsid openssl' in s
 body = s[s.index('complete_install() {'):s.index('installer_main() {')]
-assert body.index(line) < body.index('while IFS= read') < body.index('write_receipt complete')
+assert body.index(line) < body.index('[[ ! -s "$backup_stderr_file" ]]') < body.index('while IFS= read') < body.index('write_receipt complete')
 PYTEST
-for mode in failure empty multiline blankline outside traversal symlink missing checksum; do
+for mode in failure stderr empty multiline blankline outside traversal symlink missing checksum; do
   model="$work/backup-$mode"; mkdir "$model"
   if env REPO="$repo_root" MODEL="$model" MODE="$mode" bash "$work/backup-driver.sh" > "$model/output" 2>&1; then fail "baseline backup $mode unexpectedly accepted"; fi
   pass "baseline backup $mode refuses completion"
@@ -644,12 +658,22 @@ for mode in failure empty multiline blankline outside traversal symlink missing 
 done
 model="$work/backup-failure"
 check 'failed privileged backup output is not consumed/verified' bash -c '! grep -Eq "^(path-check|checksums|complete|success)$" "$1"' sh "$model/events"
+check 'detached failure reports exit phase and retained diagnostic location' bash -c 'grep -q "Source install error (baseline-backup): Detached baseline backup exited 73; stderr retained at" "$1/output" && (( $(find "$1" -name "verilio-source-install-backup-stderr.*" | wc -l) == 1 ))' sh "$model"
+check 'detached failure diagnostic remains private and is never printed' bash -c 'file=$(find "$1" -name "verilio-source-install-backup-stderr.*"); grep -Fxq PRIVATE-DIAGNOSTIC "$file" && ! grep -q PRIVATE-DIAGNOSTIC "$1/output"' sh "$model"
+check 'retained stderr diagnostic has deployment-user-only permissions' python3 - "$model" <<'PYTEST'
+import pathlib, stat, sys
+files = list(pathlib.Path(sys.argv[1]).glob('verilio-source-install-backup-stderr.*'))
+assert len(files) == 1
+assert stat.S_IMODE(files[0].stat().st_mode) == 0o600
+PYTEST
+check 'otherwise-successful stderr refuses before path/checksum acceptance' bash -c '! grep -Eq "^(path-check|checksums|complete|success)$" "$1/events" && grep -q "Baseline backup reported stderr" "$1/output" && ! grep -q PRIVATE-DIAGNOSTIC "$1/output"' sh "$work/backup-stderr"
 check 'failed backup partial artifact remains for investigation' test -f "$model/backups/partial-evidence"
 check 'checksum failure reaches verification before refusal' grep -Fxq checksums "$work/backup-checksum/events"
 model="$work/backup-success"; mkdir "$model"
 check 'accepted baseline backup completes foreground flow' env REPO="$repo_root" MODEL="$model" MODE=success bash "$work/backup-driver.sh"
-printf '%s\n' backup-foreground backup-exited path-check path-check checksums complete success > "$work/backup-expected-events"
+printf '%s\n' stdin-eof backup-foreground backup-exited path-check path-check checksums complete success > "$work/backup-expected-events"
 check 'complete receipt follows accepted backup/checksums only' bash -c 'grep -Fxq status=complete "$1/receipt" && cmp -s "$1/events" "$2"' sh "$model" "$work/backup-expected-events"
 check 'successful backup also releases ephemeral lock' test ! -e "$model/lock"
+check 'successful backup removes empty diagnostic file' bash -c '[[ -z $(find "$1" -name "verilio-source-install-backup-stderr.*") ]]' sh "$model"
 check 'canonical Compose unchanged against main' git diff --exit-code main -- "$repo_root/compose.prod.yml"
 echo "$passed source installer tests passed."

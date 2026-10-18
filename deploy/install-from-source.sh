@@ -68,7 +68,7 @@ resolve_source() {
 preflight_host() {
   [[ $(id -u) != 0 ]] || { fail 'Run as deployment user, not root.'; return 1; }
   local tool physical_root
-  for tool in bash git docker sudo openssl curl jq awk sed grep find sort xargs cmp stat install readlink tar gzip sha256sum free df mktemp ss uname id dirname mkdir mv cp chmod cat wc tr tee ln rmdir rm chown sh env; do
+  for tool in bash git docker sudo setsid openssl curl jq awk sed grep find sort xargs cmp stat install readlink tar gzip sha256sum free df mktemp ss uname id dirname mkdir mv cp chmod cat wc tr tee ln rmdir rm chown sh env; do
     command -v "$tool" >/dev/null || { fail "Missing prerequisite: $tool"; return 1; }
   done
   [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]] || { fail 'Linux amd64 required.'; return 1; }
@@ -330,12 +330,19 @@ print_success() {
   printf 'Source installation complete: %s\nInstaller commit: %s\nSource commit: %s\nOwner: %s\nVolume: verilio_pgdata\nBaseline backup: %s\n' "$version" "$installer_commit" "$commit" "$(sudo sed -n 's/^LOCAL_USER_ID=//p' "$state_root/verilio.env")" "$1"
   print_handoff
 }
-# Keep sudo foreground: command substitution can stop Compose under sudo use_pty.
+# Detach from sudo's controlling PTY, but wait in the foreground for completion.
 complete_install() {
   phase=baseline-backup
   local backup_path_file="$scratch/baseline-backup.path"
+  local backup_stderr_file status
   local backup= line name count=0
-  sudo env VERILIO_ENV_FILE="$state_root/verilio.env" VERILIO_COMPOSE_FILE="$target/compose.prod.yml" "$target/deploy/backup.sh" "$version" predeploy > "$backup_path_file" || return "$?"
+  # Outside scratch so EXIT cleanup cannot erase failure diagnostics; umask is 077.
+  backup_stderr_file=$(mktemp "$work_root/verilio-source-install-backup-stderr.XXXXXX") || return "$?"
+  sudo -n setsid --wait env VERILIO_ENV_FILE="$state_root/verilio.env" VERILIO_COMPOSE_FILE="$target/compose.prod.yml" "$target/deploy/backup.sh" "$version" predeploy </dev/null >"$backup_path_file" 2>"$backup_stderr_file" || {
+    status=$?
+    fail "Detached baseline backup exited $status; stderr retained at $backup_stderr_file (contents not printed)." || return "$status"
+  }
+  [[ ! -s "$backup_stderr_file" ]] || { fail "Baseline backup reported stderr; diagnostics retained at $backup_stderr_file (contents not printed)."; return 1; }
   # Consume stdout only after the privileged command has exited successfully.
   while IFS= read -r line || [[ -n "$line" ]]; do
     count=$((count + 1))
@@ -347,6 +354,7 @@ complete_install() {
   [[ "$backup" == /* && "$backup" == "$backup_root/"* && "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { fail 'Baseline backup path is outside the expected backup root.'; return 1; }
   sudo test -d "$backup" && sudo test ! -L "$backup" || { fail 'Baseline backup directory is missing or a symlink.'; return 1; }
   sudo sh -c 'cd "$1" && sha256sum --check checksums.txt' sh "$backup" || return "$?"
+  rm -- "$backup_stderr_file" || return "$?"
   write_receipt complete || return "$?"
   print_success "$backup"
 }
