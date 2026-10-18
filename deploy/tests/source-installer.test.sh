@@ -331,6 +331,8 @@ source_dir="$work/checkout with 'quotes'"
 print_handoff > "$work/handoff"
 check 'handoff shell quoting reconstructs actual checkout' bash -c 'line=$(sed -n "2p" "$1"); line=${line#cd }; expected=$2; eval "set -- $line"; [[ $# == 1 && $1 == "$expected" ]]' sh "$work/handoff" "$source_dir"
 check 'handoff does not hard-code recommended path' bash -c '! grep -q /srv/verilio/source "$1"' sh "$work/handoff"
+check 'handoff uses writable disk-backed updater work root' grep -Fxq 'VERILIO_SNAPSHOT_WORK_ROOT=/var/tmp ./deploy/nc110-deploy-main.sh' "$work/handoff"
+check 'source guide preserves protected parent and explicit updater work root' bash -c 'grep -Fq "VERILIO_SNAPSHOT_WORK_ROOT=/var/tmp ./deploy/nc110-deploy-main.sh" "$1" && grep -Fq "permissions to create updater scratch space" "$1"' sh "$repo_root/deploy/SOURCE_INSTALL.md"
 source_dir=$saved_source_dir
 original_digest=$state_digest
 printf 'LOCAL_USER_ID=00000000-0000-4000-8000-000000000001\n' > "$state/verilio.env"

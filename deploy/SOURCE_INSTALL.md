@@ -233,12 +233,15 @@ After successful fresh installation, the intended existing-host private-main upd
 
 ```bash
 cd /path/to/the/checkout-used-for-installation
-./deploy/nc110-deploy-main.sh
+VERILIO_SNAPSHOT_WORK_ROOT=/var/tmp ./deploy/nc110-deploy-main.sh
 ```
 
 Use the safely shell-quoted `cd` command printed by the installer: it points to its **actual**
 source checkout, not unconditionally to `/srv/verilio/source`. A relocated same-commit checkout
-prints its new path without weakening installer identity checks.
+prints its new path without weakening installer identity checks. The explicit disk-backed
+`/var/tmp` work root avoids requiring write access to the protected root-owned `/srv/verilio`
+parent when the checkout is `/srv/verilio/source`; do not weaken that parent's ownership or
+permissions to create updater scratch space.
 
 Despite its historical name, its scope is an **already-configured private host**. It fetches
 trusted current main, takes backups and uses the existing snapshot/provenance/deployment guards.

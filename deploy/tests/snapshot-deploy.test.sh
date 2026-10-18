@@ -27,6 +27,15 @@ set -euo pipefail
 [[ "${1:-}" != -v ]] || exit 0
 printf 'sudo %s\n' "$*" >>"$TEST_LOG"
 case "$1" in
+  -n)
+    [[ "$2 $3 $4" == 'setsid --wait env' && "$BASH_SUBSHELL" == 0 ]] || exit 91
+    [[ ! -t 0 && ! -t 1 && ! -t 2 ]] || exit 92
+    if IFS= read -r unexpected; then exit 93; fi
+    echo 'detached server-deploy progress' >&2
+    # A deceptive stderr backup marker must never supply the summary path.
+    echo 'Predeploy backup: WRONG-STDERR-PATH' >&2
+    shift 4
+    exec env "$@" ;;
   chown) exit 0 ;;
   mv)
     shift
@@ -149,6 +158,11 @@ esac
 echo "Unexpected Docker call: $*" >&2
 exit 1
 EOF
+cat >"$work_root/bin/setsid" <<'EOF'
+#!/usr/bin/env bash
+echo 'Unexpected real setsid execution in offline test' >&2
+exit 94
+EOF
 chmod +x "$work_root/bin/"*
 export PATH="$work_root/bin:$PATH"
 unset DOCKER_HOST
@@ -233,13 +247,34 @@ else
 fi
 [[ "$init_mode" == 755 ]] || fail 'exported PostgreSQL bind-mounted init script must remain container-readable/executable'
 [[ "$env_owner" == "$original_owner" ]] || fail 'env ownership changed'
-contains "$TEST_LOG" "sudo VERILIO_ENV_FILE=$VERILIO_ENV_FILE $VERILIO_CURRENT_LINK/deploy/server-deploy.sh"
+contains "$TEST_LOG" "sudo -n setsid --wait env VERILIO_ENV_FILE=$VERILIO_ENV_FILE $VERILIO_CURRENT_LINK/deploy/server-deploy.sh"
 contains "$CASE_DIR/output" "Rollback target: $VERILIO_RELEASE_ROOT/verilio-v0.1.1-alpha.3"
 contains "$CASE_DIR/output" 'Live: passed'
 contains "$CASE_DIR/output" 'Gateway port: 8187'
 contains "$CASE_DIR/output" 'Predeploy backup:'
 if grep -Eq 'latest|prune|reset --hard|clean -fd' "$TEST_LOG"; then fail 'unsafe command'; fi
 pass 'exact fetched main, deterministic identity, config/mode preservation, server-deploy/backup/smoke and rollback output'
+contains "$CASE_DIR/output" 'detached server-deploy progress'
+pass 'successful detached server-deploy accepts and replays non-empty stderr'
+grep -Eq "^Backup: $CASE_DIR/backups/" "$CASE_DIR/output" || fail 'backup summary must use stdout path'
+! grep -q '^Backup: WRONG-STDERR-PATH' "$CASE_DIR/output" || fail 'parsed stderr backup marker'
+pass 'successful backup summary parses stdout only'
+python3 - "$repo_root/deploy/nc110-deploy-main.sh" <<'PYTEST'
+import pathlib, sys
+s = pathlib.Path(sys.argv[1]).read_text()
+assert 'sudo setsid' in s.split('for tool in ', 1)[1].split('; do', 1)[0]
+command = next(line for line in s.splitlines() if line.startswith('sudo -n setsid'))
+assert command.startswith('sudo -n setsid --wait env VERILIO_ENV_FILE="$env_file" "$current/deploy/server-deploy.sh" ')
+assert '</dev/null >"$stdout_log" 2>"$stderr_log"' in command
+assert not any(x in command for x in ('$(', '`', '| tee', ' &'))
+assert 'stdout_log="$scratch/deploy.stdout.log"' in s
+assert 'stderr_log="$scratch/deploy.stderr.log"' in s
+assert s.index('sudo -v') < s.index(command)
+assert s.index('cat "$stdout_log"') < s.index('(( deploy_status == 0 )) || exit "$deploy_status"')
+assert s.index('cat "$stderr_log" >&2') < s.index('(( deploy_status == 0 )) || exit "$deploy_status"')
+assert s.index('(( deploy_status == 0 )) || exit "$deploy_status"') < s.index("backup=$(sed -n")
+PYTEST
+pass 'updater requires setsid and detaches foreground sudo with separate logs before success-only parsing'
 
 checksum_before=$(sha256sum "$target/checksums.txt")
 build_count=$(grep -c 'docker buildx build' "$TEST_LOG")
@@ -347,7 +382,13 @@ pass 'concurrent/stale operation lock is refused without removing it'
 
 fixture
 export FAIL_DEPLOY=true
-if run; then fail 'deploy should fail'; fi
+deploy_status=0
+run || deploy_status=$?
+[[ "$deploy_status" == 43 ]] || fail "detached failure status was not propagated: $deploy_status"
+contains "$CASE_DIR/output" 'detached server-deploy progress'
+! grep -q '^Backup:' "$CASE_DIR/output" || fail 'failed deployment printed success summary'
+[[ ! -e "$VERILIO_RELEASE_ROOT/.snapshot-deploy.lock" ]] || fail 'failure leaked updater lock'
+pass 'failed detached server-deploy replays logs, propagates exit and cleans lock without success parsing'
 contains "$CASE_DIR/output" 'exit 43'
 contains "$CASE_DIR/output" 'No automatic rollback was attempted'
 contains "$CASE_DIR/output" "sudo ln -sfn $VERILIO_RELEASE_ROOT/verilio-v0.1.1-alpha.3"

@@ -61,7 +61,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'echo "Failed at line $LINENO during $phase (exit $?)." >&2' ERR
 
-for tool in git docker sudo awk sed sha256sum tar gzip free df; do
+for tool in git docker sudo setsid awk sed sha256sum tar gzip free df; do
   command -v "$tool" >/dev/null || fail "required command is unavailable: $tool"
 done
 [[ "$(uname -s)" == Linux ]] || fail 'snapshot host builds require Linux (Ubuntu 24.04).'
@@ -195,8 +195,16 @@ env_stage=
 [[ "$(value "$env_file" VERILIO_GATEWAY_PORT)" == "$port" ]] || fail 'gateway port changed unexpectedly.'
 
 phase='server-deploy (backup, maintenance, migration, health and smoke)'
-sudo VERILIO_ENV_FILE="$env_file" "$current/deploy/server-deploy.sh" | tee "$scratch/deploy.log"
-backup=$(sed -n 's/^Predeploy backup: //p' "$scratch/deploy.log")
+stdout_log="$scratch/deploy.stdout.log"
+stderr_log="$scratch/deploy.stderr.log"
+# Detach from sudo's PTY, but wait in the foreground. Compose progress on stderr
+# is normal; only the command exit status determines deployment success.
+deploy_status=0
+sudo -n setsid --wait env VERILIO_ENV_FILE="$env_file" "$current/deploy/server-deploy.sh" </dev/null >"$stdout_log" 2>"$stderr_log" || deploy_status=$?
+cat "$stdout_log"
+cat "$stderr_log" >&2
+(( deploy_status == 0 )) || exit "$deploy_status"
+backup=$(sed -n 's/^Predeploy backup: //p' "$stdout_log")
 [[ -n "$backup" ]] || backup='none (no running PostgreSQL)'
 printf '\nSource commit: %s\nSnapshot version: %s\nPrevious version: %s\nCurrent release: %s\n' "$commit" "$version" "$previous_version" "$target"
 printf 'API image: verilio-api:%s\nGateway image: verilio-gateway:%s\nBackup: %s\nGateway port: %s\n' "$version" "$version" "$backup" "$port"

@@ -324,7 +324,7 @@ print_plan() {
   printf 'Requested ref: %s\nInstaller commit: %s\nSource commit: %s\nVersion: %s\nPlatform: linux/amd64\nRelease: %s\nConfig: %s/verilio.env\nGateway: 127.0.0.1:%s\n' "$ref" "$installer_commit" "$commit" "$version" "$target" "$state_root" "$port"
 }
 print_handoff() {
-  printf 'Next private-main updates (handoff VM validation pending):\ncd %q\n./deploy/nc110-deploy-main.sh\n' "$source_dir"
+  printf 'Next private-main updates (handoff VM validation pending):\ncd %q\nVERILIO_SNAPSHOT_WORK_ROOT=/var/tmp ./deploy/nc110-deploy-main.sh\n' "$source_dir"
 }
 print_success() {
   printf 'Source installation complete: %s\nInstaller commit: %s\nSource commit: %s\nOwner: %s\nVolume: verilio_pgdata\nBaseline backup: %s\n' "$version" "$installer_commit" "$commit" "$(sudo sed -n 's/^LOCAL_USER_ID=//p' "$state_root/verilio.env")" "$1"
