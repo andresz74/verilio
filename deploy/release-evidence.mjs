@@ -398,12 +398,22 @@ export function state(dir, component, value) {
   if (["publication", "delivery"].includes(component))
     status[component] = value;
   else status.images[component] = value;
-  const temporary = `${file}.tmp`;
-  fs.writeFileSync(temporary, `${JSON.stringify(status, null, 2)}\n`, {
-    flag: "wx",
-    mode: 0o600,
-  });
-  fs.renameSync(temporary, file);
+  // Attempts are isolated and status writes are serial. A killed writer may leave
+  // its private sibling behind, but must not block subsequent failure diagnostics.
+  const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+  let owned = false;
+  try {
+    const fd = fs.openSync(temporary, "wx", 0o600);
+    owned = true;
+    try {
+      fs.writeFileSync(fd, `${JSON.stringify(status, null, 2)}\n`);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(temporary, file);
+  } finally {
+    if (owned && fs.existsSync(temporary)) fs.unlinkSync(temporary);
+  }
 }
 export function generate(qualificationFile, dir, binary) {
   const q = read(qualificationFile);

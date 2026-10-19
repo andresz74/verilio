@@ -102,4 +102,46 @@ dockerfile = File.read(File.join(root, 'deploy/Dockerfile'))
 check.call('both runtime stages preserve title/version/revision and add canonical source label',
   dockerfile.scan('org.opencontainers.image.source="https://github.com/andresz74/verilio"').length == 2 &&
   %w[title version revision].all? { |label| dockerfile.scan("org.opencontainers.image.#{label}=").length == 2 })
-puts "#{passed} publishing workflow contract tests passed (offline structural YAML/Bash validation)."
+
+# Failures in required uploads must follow GitHub's default success-only gating;
+# no always()/continue-on-error escape hatch may reach login or publication.
+check.call('pre-upload failure cannot reach revalidation, login or publication',
+  steps[evidence_upload..steps.index { |s| s['name'] == 'Publish tested images and verify anonymous access' }].all? { |s|
+    s['if'].nil? && s['continue-on-error'].nil?
+  })
+final_upload = steps.find { |s| s['id'] == 'final_evidence' }
+delivery = steps.find { |s| s['name'] == 'Record evidence delivery result' }
+diagnostics = steps.find { |s| s['name'] == 'Preserve safe attempt diagnostics' }
+check.call('final upload failure stays fatal and attempts safe diagnostic preservation',
+  final_upload['if'].nil? && final_upload['continue-on-error'].nil? &&
+  final_upload['with']['if-no-files-found'] == 'error' &&
+  delivery['if'] == 'always()' &&
+  delivery['env']['FINAL_EVIDENCE_OUTCOME'] == '${{ steps.final_evidence.outcome }}' &&
+  diagnostics['if'] == 'failure()' && diagnostics['continue-on-error'].nil? &&
+  diagnostics['with']['path'].include?('/publication.json') &&
+  diagnostics['with']['path'].include?('/attempt-status.json'))
+require 'tmpdir'
+require 'fileutils'
+Dir.mktmpdir('verilio-upload-contract-') do |dir|
+  FileUtils.mkdir_p([File.join(dir, 'bin'), File.join(dir, 'verilio-evidence')])
+  mock = File.join(dir, 'bin', 'node')
+  File.write(mock, "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$STATUS_LOG\"\n")
+  File.chmod(0o755, mock)
+  %w[failure cancelled skipped success].each do |outcome|
+    log = File.join(dir, 'status.log')
+    summary = File.join(dir, 'summary.md')
+    File.write(log, '')
+    File.write(summary, '')
+    _, error, status = Open3.capture3({
+      'PATH' => "#{File.join(dir, 'bin')}:#{ENV.fetch('PATH')}",
+      'RUNNER_TEMP' => dir, 'STATUS_LOG' => log, 'GITHUB_STEP_SUMMARY' => summary,
+      'FINAL_EVIDENCE_OUTCOME' => outcome
+    }, 'bash', '-e', '-o', 'pipefail', '-c', delivery['run'])
+    expected = outcome == 'success' ? 'uploaded' : 'incomplete'
+    check.call("#{outcome} final upload records #{expected} without republishing",
+      status.success? && error.empty? && File.read(log).include?(" delivery #{expected}\n") &&
+      (outcome == 'success' ? File.read(summary).empty? : File.read(summary).include?('Never blindly republish')) &&
+      !delivery['run'].match?(/publish-release-images|docker|build-release/))
+  end
+end
+puts "#{passed} publishing workflow contract tests passed including upload failure execution."

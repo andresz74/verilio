@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   qualification,
+  state,
   sbom,
   checksum,
   issue,
@@ -456,6 +457,7 @@ if(a[0]==='push'){
  fs.writeFileSync(marker+service,'yes');process.exit(0);
 }
 if(a[0]==='buildx'){
+ if(process.env.SCENARIO==='registry-error'){console.error('registry unavailable');process.exit(6);}
  if(process.env.SCENARIO==='both-exist' || (process.env.SCENARIO==='partial'&&service==='api')){console.log('{}');process.exit(0);}
  if(!fs.existsSync(marker+service)){console.error('manifest unknown');process.exit(1);}
  if(process.env.SCENARIO==='anonymous-failure'&&process.env.DOCKER_CONFIG?.endsWith('/anonymous'))process.exit(8);
@@ -542,7 +544,11 @@ for (const scenario of [
     assert.equal(
       JSON.parse(fs.readFileSync(path.join(dir, "attempt-status.json")))
         .publication,
-      "failed_review_registry_state",
+      scenario === "both-exist"
+        ? "refused_existing_tags"
+        : scenario === "partial"
+          ? "refused_partial_existing_tags"
+          : "failed_review_registry_state",
     );
     if (scenario === "gateway-push-failure")
       assert.equal(
@@ -552,18 +558,36 @@ for (const scenario of [
       );
   });
 test("strict publisher missing evidence refuses before registry operations", () => {
-  const { result, log } = publishedAttempt("success", (dir) =>
+  const { dir, result, log } = publishedAttempt("success", (dir) =>
     fs.unlinkSync(path.join(dir, "evidence.json")),
   );
   assert.notEqual(result.status, 0);
   assert.doesNotMatch(log, /buildx|tag |push /);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(dir, "attempt-status.json")))
+      .publication,
+    "failed_before_registry_interaction",
+  );
+  assert.match(
+    result.stdout,
+    /Publication status: failed_before_registry_interaction/,
+  );
 });
 test("strict publisher checksum failure refuses before registry operations", () => {
-  const { result, log } = publishedAttempt("success", (dir) =>
+  const { dir, result, log } = publishedAttempt("success", (dir) =>
     fs.appendFileSync(path.join(dir, "gateway.spdx.json"), " "),
   );
   assert.notEqual(result.status, 0);
   assert.doesNotMatch(log, /buildx|tag |push /);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(dir, "attempt-status.json")))
+      .publication,
+    "failed_before_registry_interaction",
+  );
+  assert.match(
+    result.stdout,
+    /Publication status: failed_before_registry_interaction/,
+  );
 });
 
 test("artifact-delivery failure is recorded separately from verified publication", () => {
@@ -575,4 +599,52 @@ test("artifact-delivery failure is recorded separately from verified publication
   );
   assert.equal(status.publication, "verified");
   assert.equal(status.delivery, "incomplete");
+});
+
+test("registry inspection error is distinguished from an attempted push", () => {
+  const { dir, result, log } = publishedAttempt("registry-error");
+  assert.notEqual(result.status, 0);
+  assert.doesNotMatch(log, /^push /m);
+  assert.equal(
+    JSON.parse(fs.readFileSync(path.join(dir, "attempt-status.json")))
+      .publication,
+    "failed_before_push",
+  );
+});
+test("interrupted status temp files cannot block or replace accepted status", () => {
+  const dir = path.join(tmp, "interrupted-status");
+  fs.mkdirSync(dir);
+  state(dir, "api", "push_accepted_unverified");
+  const old = path.join(dir, "attempt-status.json.tmp");
+  const abandoned = path.join(dir, "attempt-status.json.interrupted.tmp");
+  fs.writeFileSync(old, "partial JSON");
+  fs.writeFileSync(abandoned, "partial JSON");
+  state(dir, "publication", "failed_review_registry_state");
+  const actual = JSON.parse(
+    fs.readFileSync(path.join(dir, "attempt-status.json")),
+  );
+  assert.equal(actual.images.api, "push_accepted_unverified");
+  assert.equal(actual.publication, "failed_review_registry_state");
+  assert.equal(fs.readFileSync(old, "utf8"), "partial JSON");
+  assert.equal(fs.readFileSync(abandoned, "utf8"), "partial JSON");
+  assert.equal(fs.readdirSync(dir).length, 3);
+});
+test("failed atomic status replacement preserves previous status and removes only its own temp", () => {
+  const dir = path.join(tmp, "status-rename-failure");
+  fs.mkdirSync(dir);
+  state(dir, "api", "push_accepted_unverified");
+  const before = checksum(path.join(dir, "attempt-status.json"));
+  const rename = fs.renameSync;
+  try {
+    fs.renameSync = () => {
+      throw new Error("injected rename failure");
+    };
+    assert.throws(() =>
+      state(dir, "publication", "failed_review_registry_state"),
+    );
+  } finally {
+    fs.renameSync = rename;
+  }
+  assert.equal(checksum(path.join(dir, "attempt-status.json")), before);
+  assert.deepEqual(fs.readdirSync(dir), ["attempt-status.json"]);
 });

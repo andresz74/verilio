@@ -8,9 +8,9 @@ if [[ $# != 1 ]]; then
   [[ $# == 3 && $2 == --evidence-dir && -n $3 ]] || { echo 'Expected version [--evidence-dir <directory>]' >&2; exit 64; }
   evidence_dir=$3
 fi
-commit=$("$repo_root/deploy/verify-official-release-source.sh" "$version")
-if [[ -n "$evidence_dir" ]]; then
-  node "$repo_root/deploy/release-evidence.mjs" validate "$evidence_dir" "$version" "$commit"
+if ! commit=$("$repo_root/deploy/verify-official-release-source.sh" "$version"); then
+  echo 'Publication preflight failed before registry interaction; no push attempted.' >&2
+  exit 1
 fi
 publication_status() {
   [[ -z "$evidence_dir" ]] || node "$repo_root/deploy/release-evidence.mjs" status "$evidence_dir" "$1" "$2"
@@ -50,8 +50,11 @@ gateway_digest='not verified'
 api_anonymous='not attempted'
 gateway_anonymous='not attempted'
 registry_started=false
+push_started=false
+publication_result=not_started
 logged_out=false
 receipt() {
+  printf 'Publication status: %s\n' "$publication_result"
   printf 'Verilio version: %s\nSource commit: %s\nPlatform: %s\n\n' "$version" "$commit" "$VERILIO_OFFICIAL_PLATFORM"
   printf 'API: %s\nDigest: %s\nAnonymous API verification: %s\n\n' "$api_ref" "$api_digest" "$api_anonymous"
   printf 'Gateway: %s\nDigest: %s\nAnonymous Gateway verification: %s\n' "$gateway_ref" "$gateway_digest" "$gateway_anonymous"
@@ -62,8 +65,17 @@ cleanup() {
   if [[ "$registry_started" == true && "$logged_out" == false ]]; then
     docker logout ghcr.io >/dev/null 2>&1 || true
   fi
-  if [[ "$result" != 0 && -n "$evidence_dir" ]]; then
-    publication_status publication failed_review_registry_state || true
+  if [[ "$result" != 0 ]]; then
+    if [[ "$push_started" == true ]]; then
+      publication_result=failed_review_registry_state
+    elif [[ "$publication_result" == refused_existing_tags || "$publication_result" == refused_partial_existing_tags ]]; then
+      : # Preserve the explicit immutable-tag refusal, with no push attempted.
+    elif [[ "$registry_started" == true ]]; then
+      publication_result=failed_before_push
+    else
+      publication_result=failed_before_registry_interaction
+    fi
+    publication_status publication "$publication_result" || true
   fi
   receipt
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
@@ -73,6 +85,10 @@ cleanup() {
   exit "$result"
 }
 trap cleanup EXIT
+
+if [[ -n "$evidence_dir" ]]; then
+  node "$repo_root/deploy/release-evidence.mjs" validate "$evidence_dir" "$version" "$commit"
+fi
 
 for service in api gateway; do
   docker image inspect "verilio-$service:$version" >"$work_dir/$service.json" || fail "Missing local $service release image."
@@ -103,8 +119,10 @@ registry_started=true
 api_exists=$(remote_exists "$api_ref")
 gateway_exists=$(remote_exists "$gateway_ref")
 if [[ "$api_exists" == true && "$gateway_exists" == true ]]; then
+  publication_result=refused_existing_tags
   fail 'Both immutable official tags already exist; refusing to republish.'
 elif [[ "$api_exists" == true || "$gateway_exists" == true ]]; then
+  publication_result=refused_partial_existing_tags
   fail "Partial registry state: API exists=$api_exists, Gateway exists=$gateway_exists. Inspect manually; no overwrite or deletion performed."
 fi
 
@@ -112,6 +130,7 @@ fi
 docker tag "$api_id" "$api_ref"
 docker tag "$gateway_id" "$gateway_ref"
 publication_status api push_attempted_remote_state_unknown
+push_started=true
 docker push "$api_ref" || fail 'API push failed; inspect possible partial registry state before retrying.'
 publication_status api push_accepted_unverified
 publication_status gateway push_attempted_remote_state_unknown
@@ -153,3 +172,5 @@ if DOCKER_CONFIG="$work_dir/anonymous" verify_remote "$gateway_ref" "$gateway_id
 if [[ -n "$evidence_dir" ]]; then
   node "$repo_root/deploy/release-evidence.mjs" publish-receipt "$evidence_dir" "$api_digest" "$gateway_digest"
 fi
+
+publication_result=verified
