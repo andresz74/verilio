@@ -1,0 +1,21 @@
+{
+  "version": "1.54.1",
+  "url": "https://github.com/anchore/syft/releases/download/v1.54.1/syft_1.54.1_linux_amd64.tar.gz",
+  "archive_sha256": "c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47",
+  "binary_sha256": "dbf75864e7a7ff9e1fbf00552c31483f693188632a9f68f343cd7653dac513d6",
+  "configuration_sha256": "b74260d66f58f1bdcd0ccb46d10806c146f443be4d9dad58d5e80d773e51a78e",
+  "schema_sha256": "239208b7ac287b3cf5d9a9af23f9d69863971102a5e1587a27a398b43490b89b",
+  "schema_commit": "aadf3b0b8dbbabdb4d880b0fc714255fea436ff7",
+  "catalogers": [
+    "dpkg-db-cataloger",
+    "apk-db-cataloger",
+    "binary-classifier-cataloger",
+    "javascript-package-cataloger",
+    "go-module-binary-cataloger",
+    "file"
+  ],
+  "scope": "squashed",
+  "format": "spdx-json@2.3",
+  "timeout_seconds": 600,
+  "max_output_bytes": 104857600
+}

@@ -874,7 +874,18 @@ Deliver:
 
 ## D6 — Hardening
 
-**Status:** Possible later work; not complete.
+**Status:** D11.1 exact-image SPDX evidence mechanism implemented for review;
+operational official-publication acceptance pending. D11 is not complete.
+
+D11.1 adds pinned Syft scanning after full qualification and before authentication,
+paired SPDX 2.3 validation/checksums, immutable qualification/evidence/publication
+receipts, and 30-day CI artifacts. The Gateway final-image inventory explicitly
+cannot establish complete bundled-frontend dependency coverage. Unsigned evidence
+does not independently authenticate the publisher; alpha.5 has no retroactive
+D11.1 evidence. See [SBOM evidence](../deploy/SBOM_EVIDENCE.md).
+
+D11.2–D11.6 remain unimplemented. Official repositories, amd64 runtime/archive
+contracts and existing platform validation claims remain unchanged.
 
 Possible later work:
 

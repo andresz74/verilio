@@ -51,7 +51,7 @@ commands = [
   'pnpm db:migrate', 'pnpm db:generate', 'test -z "$(git status --porcelain)"',
   'pnpm lint', 'pnpm typecheck', 'pnpm test', 'pnpm test:integration',
   'pnpm test:e2e', 'pnpm test:deploy', 'pnpm build',
-  './deploy/build-release.sh "$VERSION"', './deploy/test-release.sh "$VERSION"',
+  './deploy/build-release.sh "$VERSION"', './deploy/test-release.sh "$VERSION" --expected-images "$RUNNER_TEMP/verilio-sbom/candidate.json"',
   './deploy/export-release.sh "$VERSION" "$RUNNER_TEMP/verilio-export"'
 ]
 positions = commands.map { |command| before_login.lines.find_index { |line| line.strip == command } }
@@ -69,7 +69,18 @@ check.call('build once, pin pre-gate IDs and compare after testing/export before
 after_login = steps[(login_index + 1)..-1].map { |step| step.fetch('run', '') }.join("\n")
 check.call('publication invokes helper after login, with no rebuild or floating tags',
   after_login.include?('./deploy/publish-release-images.sh "$VERSION"') &&
+  after_login.include?('--evidence-dir') &&
   !after_login.match?(/build-release|buildx build|docker build|docker pull|:(latest|alpha|stable|v0\.1|v1)\b/))
+evidence_upload = steps.index { |step| step['name'] == 'Preserve required pre-publication evidence' }
+revalidate = steps.index { |step| step['name'] == 'Revalidate evidence before authentication' }
+check.call('paired SBOM gate and mandatory artifact upload precede login',
+  evidence_upload < revalidate && revalidate < login_index &&
+  steps[evidence_upload]['if'].nil? && steps[evidence_upload]['continue-on-error'].nil? &&
+  before_login.include?('./deploy/generate-release-sbom.sh') && before_login.include?('release-evidence.mjs validate'))
+uploads = steps.select { |step| step.fetch('uses', '').start_with?('actions/upload-artifact@') }
+check.call('bounded explicit artifact allowlist excludes logs and credentials',
+  uploads.length == 3 && uploads.all? { |step| step['with']['retention-days'] == 30 && !step['with']['path'].match?(/\*|docker|stderr|scanner/) } &&
+  steps[evidence_upload]['with']['if-no-files-found'] == 'error')
 cleanup = steps.last
 check.call('development PostgreSQL has immediate trap and always cleanup including failures',
   before_login.include?("trap 'docker compose -f docker-compose.yml down --volumes --remove-orphans' EXIT") &&
@@ -91,4 +102,46 @@ dockerfile = File.read(File.join(root, 'deploy/Dockerfile'))
 check.call('both runtime stages preserve title/version/revision and add canonical source label',
   dockerfile.scan('org.opencontainers.image.source="https://github.com/andresz74/verilio"').length == 2 &&
   %w[title version revision].all? { |label| dockerfile.scan("org.opencontainers.image.#{label}=").length == 2 })
-puts "#{passed} publishing workflow contract tests passed (offline structural YAML/Bash validation)."
+
+# Failures in required uploads must follow GitHub's default success-only gating;
+# no always()/continue-on-error escape hatch may reach login or publication.
+check.call('pre-upload failure cannot reach revalidation, login or publication',
+  steps[evidence_upload..steps.index { |s| s['name'] == 'Publish tested images and verify anonymous access' }].all? { |s|
+    s['if'].nil? && s['continue-on-error'].nil?
+  })
+final_upload = steps.find { |s| s['id'] == 'final_evidence' }
+delivery = steps.find { |s| s['name'] == 'Record evidence delivery result' }
+diagnostics = steps.find { |s| s['name'] == 'Preserve safe attempt diagnostics' }
+check.call('final upload failure stays fatal and attempts safe diagnostic preservation',
+  final_upload['if'].nil? && final_upload['continue-on-error'].nil? &&
+  final_upload['with']['if-no-files-found'] == 'error' &&
+  delivery['if'] == 'always()' &&
+  delivery['env']['FINAL_EVIDENCE_OUTCOME'] == '${{ steps.final_evidence.outcome }}' &&
+  diagnostics['if'] == 'failure()' && diagnostics['continue-on-error'].nil? &&
+  diagnostics['with']['path'].include?('/publication.json') &&
+  diagnostics['with']['path'].include?('/attempt-status.json'))
+require 'tmpdir'
+require 'fileutils'
+Dir.mktmpdir('verilio-upload-contract-') do |dir|
+  FileUtils.mkdir_p([File.join(dir, 'bin'), File.join(dir, 'verilio-evidence')])
+  mock = File.join(dir, 'bin', 'node')
+  File.write(mock, "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >>\"$STATUS_LOG\"\n")
+  File.chmod(0o755, mock)
+  %w[failure cancelled skipped success].each do |outcome|
+    log = File.join(dir, 'status.log')
+    summary = File.join(dir, 'summary.md')
+    File.write(log, '')
+    File.write(summary, '')
+    _, error, status = Open3.capture3({
+      'PATH' => "#{File.join(dir, 'bin')}:#{ENV.fetch('PATH')}",
+      'RUNNER_TEMP' => dir, 'STATUS_LOG' => log, 'GITHUB_STEP_SUMMARY' => summary,
+      'FINAL_EVIDENCE_OUTCOME' => outcome
+    }, 'bash', '-e', '-o', 'pipefail', '-c', delivery['run'])
+    expected = outcome == 'success' ? 'uploaded' : 'incomplete'
+    check.call("#{outcome} final upload records #{expected} without republishing",
+      status.success? && error.empty? && File.read(log).include?(" delivery #{expected}\n") &&
+      (outcome == 'success' ? File.read(summary).empty? : File.read(summary).include?('Never blindly republish')) &&
+      !delivery['run'].match?(/publish-release-images|docker|build-release/))
+  end
+end
+puts "#{passed} publishing workflow contract tests passed including upload failure execution."

@@ -3,7 +3,18 @@
 set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 version=${1:-}
-commit=$("$repo_root/deploy/verify-official-release-source.sh" "$@")
+evidence_dir=''
+if [[ $# != 1 ]]; then
+  [[ $# == 3 && $2 == --evidence-dir && -n $3 ]] || { echo 'Expected version [--evidence-dir <directory>]' >&2; exit 64; }
+  evidence_dir=$3
+fi
+if ! commit=$("$repo_root/deploy/verify-official-release-source.sh" "$version"); then
+  echo 'Publication preflight failed before registry interaction; no push attempted.' >&2
+  exit 1
+fi
+publication_status() {
+  [[ -z "$evidence_dir" ]] || node "$repo_root/deploy/release-evidence.mjs" status "$evidence_dir" "$1" "$2"
+}
 # Source only after validating the literal non-secret contract.
 # shellcheck disable=SC1091
 source "$repo_root/deploy/official-images.env"
@@ -34,13 +45,16 @@ NODE
 }
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/verilio-publish.XXXXXX")
-api_digest='not published'
-gateway_digest='not published'
+api_digest='not verified'
+gateway_digest='not verified'
 api_anonymous='not attempted'
 gateway_anonymous='not attempted'
 registry_started=false
+push_started=false
+publication_result=not_started
 logged_out=false
 receipt() {
+  printf 'Publication status: %s\n' "$publication_result"
   printf 'Verilio version: %s\nSource commit: %s\nPlatform: %s\n\n' "$version" "$commit" "$VERILIO_OFFICIAL_PLATFORM"
   printf 'API: %s\nDigest: %s\nAnonymous API verification: %s\n\n' "$api_ref" "$api_digest" "$api_anonymous"
   printf 'Gateway: %s\nDigest: %s\nAnonymous Gateway verification: %s\n' "$gateway_ref" "$gateway_digest" "$gateway_anonymous"
@@ -51,6 +65,18 @@ cleanup() {
   if [[ "$registry_started" == true && "$logged_out" == false ]]; then
     docker logout ghcr.io >/dev/null 2>&1 || true
   fi
+  if [[ "$result" != 0 ]]; then
+    if [[ "$push_started" == true ]]; then
+      publication_result=failed_review_registry_state
+    elif [[ "$publication_result" == refused_existing_tags || "$publication_result" == refused_partial_existing_tags ]]; then
+      : # Preserve the explicit immutable-tag refusal, with no push attempted.
+    elif [[ "$registry_started" == true ]]; then
+      publication_result=failed_before_push
+    else
+      publication_result=failed_before_registry_interaction
+    fi
+    publication_status publication "$publication_result" || true
+  fi
   receipt
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
     { echo '### Verilio official image publication'; echo '```text'; receipt; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
@@ -60,11 +86,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [[ -n "$evidence_dir" ]]; then
+  node "$repo_root/deploy/release-evidence.mjs" validate "$evidence_dir" "$version" "$commit"
+fi
+
 for service in api gateway; do
   docker image inspect "verilio-$service:$version" >"$work_dir/$service.json" || fail "Missing local $service release image."
 done
 api_id=$(validate_config "$work_dir/api.json")
 gateway_id=$(validate_config "$work_dir/gateway.json")
+if [[ -n "$evidence_dir" ]]; then
+  required_api_id=$(node -e 'console.log(JSON.parse(require("node:fs").readFileSync(process.argv[1])).images.api.id)' "$evidence_dir/qualification.json")
+  required_gateway_id=$(node -e 'console.log(JSON.parse(require("node:fs").readFileSync(process.argv[1])).images.gateway.id)' "$evidence_dir/qualification.json")
+  [[ "$api_id" == "$required_api_id" && "$gateway_id" == "$required_gateway_id" ]] || fail 'Strict qualified image identity changed.'
+fi
 # Workflow captures IDs immediately after build, before the disposable release gate.
 [[ -z "${VERILIO_QUALIFIED_API_IMAGE_ID:-}" || "$api_id" == "$VERILIO_QUALIFIED_API_IMAGE_ID" ]] || fail 'API image changed after qualification.'
 [[ -z "${VERILIO_QUALIFIED_GATEWAY_IMAGE_ID:-}" || "$gateway_id" == "$VERILIO_QUALIFIED_GATEWAY_IMAGE_ID" ]] || fail 'Gateway image changed after qualification.'
@@ -84,27 +119,36 @@ registry_started=true
 api_exists=$(remote_exists "$api_ref")
 gateway_exists=$(remote_exists "$gateway_ref")
 if [[ "$api_exists" == true && "$gateway_exists" == true ]]; then
+  publication_result=refused_existing_tags
   fail 'Both immutable official tags already exist; refusing to republish.'
 elif [[ "$api_exists" == true || "$gateway_exists" == true ]]; then
+  publication_result=refused_partial_existing_tags
   fail "Partial registry state: API exists=$api_exists, Gateway exists=$gateway_exists. Inspect manually; no overwrite or deletion performed."
 fi
 
 # Pin by validated local image ID, so mutable local aliases cannot swap the objects.
 docker tag "$api_id" "$api_ref"
 docker tag "$gateway_id" "$gateway_ref"
+publication_status api push_attempted_remote_state_unknown
+push_started=true
 docker push "$api_ref" || fail 'API push failed; inspect possible partial registry state before retrying.'
+publication_status api push_accepted_unverified
+publication_status gateway push_attempted_remote_state_unknown
 docker push "$gateway_ref" || fail 'Gateway push failed; API may be published. Inspect partial registry state before retrying.'
+
+publication_status gateway push_accepted_unverified
 
 verify_remote() {
   local ref=$1 expected_id=$2 expected_digest=${3:-} digest config_id
-  docker buildx imagetools inspect "$ref" --raw >"$work_dir/manifest.json" || return 1
-  config_id=$(node -e 'const m=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); if(!m.config?.digest) process.exit(1); console.log(m.config.digest)' "$work_dir/manifest.json") || return 1
-  [[ "$config_id" == "$expected_id" ]] || return 1
   digest=$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}') || return 1
   [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 1
   [[ -z "$expected_digest" || "$digest" == "$expected_digest" ]] || return 1
+  docker buildx imagetools inspect "$ref@$digest" --raw >"$work_dir/manifest.json" || return 1
+  config_id=$(node -e 'const m=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")); if(m.manifests || !m.config?.digest) process.exit(1); console.log(m.config.digest)' "$work_dir/manifest.json") || return 1
+  [[ "$config_id" == "$expected_id" ]] || return 1
   docker buildx imagetools inspect "$ref@$digest" --format '{{json .Image}}' >"$work_dir/remote-config.json" || return 1
   validate_config "$work_dir/remote-config.json" || return 1
+  [[ "$(docker buildx imagetools inspect "$ref" --format '{{.Manifest.Digest}}')" == "$digest" ]] || return 1
   printf '%s\n' "$digest"
 }
 api_digest=$(verify_remote "$api_ref" "$api_id") || fail 'Published API metadata/object verification failed; inspect registry state manually.'
@@ -121,6 +165,12 @@ NODE
 anonymous_failed=false
 api_anonymous=failed
 gateway_anonymous=failed
-if DOCKER_CONFIG="$work_dir/anonymous" verify_remote "$api_ref" "$api_id" "$api_digest" >/dev/null; then api_anonymous=passed; else anonymous_failed=true; fi
-if DOCKER_CONFIG="$work_dir/anonymous" verify_remote "$gateway_ref" "$gateway_id" "$gateway_digest" >/dev/null; then gateway_anonymous=passed; else anonymous_failed=true; fi
+if DOCKER_CONFIG="$work_dir/anonymous" verify_remote "$api_ref" "$api_id" "$api_digest" >/dev/null; then api_anonymous=passed; publication_status api anonymous_verified; else anonymous_failed=true; fi
+if DOCKER_CONFIG="$work_dir/anonymous" verify_remote "$gateway_ref" "$gateway_id" "$gateway_digest" >/dev/null; then gateway_anonymous=passed; publication_status gateway anonymous_verified; else anonymous_failed=true; fi
 [[ "$anonymous_failed" == false ]] || fail 'Anonymous verification failed. Inspect GHCR package visibility/linkage; no permissions changed or published images deleted.'
+
+if [[ -n "$evidence_dir" ]]; then
+  node "$repo_root/deploy/release-evidence.mjs" publish-receipt "$evidence_dir" "$api_digest" "$gateway_digest"
+fi
+
+publication_result=verified

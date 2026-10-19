@@ -1,0 +1,12 @@
+check-for-app-update: false
+scope: squashed
+parallelism: 2
+javascript:
+  search-remote-licenses: false
+  include-dev-dependencies: false
+java:
+  use-network: false
+python:
+  search-remote-licenses: false
+cache:
+  dir: ''

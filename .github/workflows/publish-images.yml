@@ -75,13 +75,41 @@ jobs:
           ./deploy/build-release.sh "$VERSION"
           api_id=$(docker image inspect --format '{{.Id}}' "verilio-api:$VERSION")
           gateway_id=$(docker image inspect --format '{{.Id}}' "verilio-gateway:$VERSION")
-          ./deploy/test-release.sh "$VERSION"
+          mkdir -p "$RUNNER_TEMP/verilio-sbom"
+          node deploy/release-evidence.mjs capture "$VERSION" "$(git rev-parse HEAD)" "$api_id" "$gateway_id" "$RUNNER_TEMP/verilio-sbom/candidate.json"
+          ./deploy/test-release.sh "$VERSION" --expected-images "$RUNNER_TEMP/verilio-sbom/candidate.json"
           ./deploy/export-release.sh "$VERSION" "$RUNNER_TEMP/verilio-export"
+          printf 'VERILIO_VERSION=%s\n' "$VERSION" > "$RUNNER_TEMP/verilio-archive.env"
+          "$RUNNER_TEMP/verilio-export/verilio-$VERSION/deploy/verify-release-provenance.sh" --loaded-images "$RUNNER_TEMP/verilio-archive.env"
+          cmp compose.prod.yml "$RUNNER_TEMP/verilio-export/verilio-$VERSION/compose.prod.yml"
+          grep -Fx "source_commit=$(git rev-parse HEAD)" "$RUNNER_TEMP/verilio-export/verilio-$VERSION/release-manifest.txt"
           test "$api_id" = "$(docker image inspect --format '{{.Id}}' "verilio-api:$VERSION")"
           test "$gateway_id" = "$(docker image inspect --format '{{.Id}}' "verilio-gateway:$VERSION")"
           ./deploy/verify-official-release-source.sh "$VERSION"
           echo "VERILIO_QUALIFIED_API_IMAGE_ID=$api_id" >> "$GITHUB_ENV"
           echo "VERILIO_QUALIFIED_GATEWAY_IMAGE_ID=$gateway_id" >> "$GITHUB_ENV"
+          node deploy/release-evidence.mjs qualify "$RUNNER_TEMP/verilio-sbom/candidate.json" "$RUNNER_TEMP/verilio-sbom/qualification.json"
+      - name: Obtain verified pinned Syft
+        run: node deploy/release-evidence.mjs install-scanner "$RUNNER_TEMP/verilio-syft"
+      - name: Generate and validate exact-image SBOM evidence
+        run: |
+          ./deploy/generate-release-sbom.sh --qualification "$RUNNER_TEMP/verilio-sbom/qualification.json" --output-dir "$RUNNER_TEMP/verilio-evidence" --syft "$RUNNER_TEMP/verilio-syft/syft"
+      - name: Preserve required pre-publication evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-${{ env.VERSION }}-linux-amd64-${{ github.run_id }}-${{ github.run_attempt }}-qualified
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/verilio-evidence/qualification.json
+            ${{ runner.temp }}/verilio-evidence/evidence.json
+            ${{ runner.temp }}/verilio-evidence/checksums.txt
+            ${{ runner.temp }}/verilio-evidence/api.spdx.json
+            ${{ runner.temp }}/verilio-evidence/gateway.spdx.json
+            ${{ runner.temp }}/verilio-evidence/api.scan.json
+            ${{ runner.temp }}/verilio-evidence/gateway.scan.json
+      - name: Revalidate evidence before authentication
+        run: node deploy/release-evidence.mjs validate "$RUNNER_TEMP/verilio-evidence" "$VERSION" "$(git rev-parse HEAD)"
       - name: Log in after all qualification passes
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -90,7 +118,45 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
           logout: true
       - name: Publish tested images and verify anonymous access
-        run: ./deploy/publish-release-images.sh "$VERSION"
+        run: ./deploy/publish-release-images.sh "$VERSION" --evidence-dir "$RUNNER_TEMP/verilio-evidence"
+      - name: Preserve final publication evidence
+        id: final_evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-${{ env.VERSION }}-linux-amd64-${{ github.run_id }}-${{ github.run_attempt }}-published
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/verilio-evidence/publication.json
+            ${{ runner.temp }}/verilio-evidence/attempt-status.json
+      - name: Record evidence delivery result
+        if: always()
+        env:
+          FINAL_EVIDENCE_OUTCOME: ${{ steps.final_evidence.outcome }}
+        run: |
+          if [[ -d "$RUNNER_TEMP/verilio-evidence" ]]; then
+            delivery=incomplete
+            [[ "$FINAL_EVIDENCE_OUTCOME" != success ]] || delivery=uploaded
+            node deploy/release-evidence.mjs status "$RUNNER_TEMP/verilio-evidence" delivery "$delivery"
+            [[ "$delivery" == uploaded ]] || echo 'Evidence finalization incomplete; inspect this attempt. Never blindly republish immutable tags.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Preserve safe attempt diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sbom-${{ env.VERSION }}-linux-amd64-${{ github.run_id }}-${{ github.run_attempt }}-incomplete
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            ${{ runner.temp }}/verilio-evidence/attempt-status.json
+            ${{ runner.temp }}/verilio-evidence/qualification.json
+            ${{ runner.temp }}/verilio-evidence/evidence.json
+            ${{ runner.temp }}/verilio-evidence/checksums.txt
+            ${{ runner.temp }}/verilio-evidence/publication.json
+            ${{ runner.temp }}/verilio-evidence/api.spdx.json
+            ${{ runner.temp }}/verilio-evidence/gateway.spdx.json
+            ${{ runner.temp }}/verilio-evidence/api.scan.json
+            ${{ runner.temp }}/verilio-evidence/gateway.scan.json
       - name: Clean up development PostgreSQL even on failure
         if: always()
         run: docker compose -f docker-compose.yml down --volumes --remove-orphans

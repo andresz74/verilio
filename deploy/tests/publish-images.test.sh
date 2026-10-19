@@ -175,7 +175,7 @@ const log = fs.readFileSync(process.argv[2], 'utf8');
 const summary = fs.readFileSync(process.argv[3], 'utf8');
 assert.ok(log.indexOf('docker logout ghcr.io') < log.indexOf('true docker buildx'));
 for (const service of ['api', 'gateway']) {
-  assert.ok(log.includes(`true docker buildx imagetools inspect ghcr.io/andresz74/verilio-${service}:v9.8.7-test --raw`));
+  assert.match(log, new RegExp(`true docker buildx imagetools inspect ghcr.io/andresz74/verilio-${service}:v9.8.7-test@sha256:[0-9a-f]{64} --raw`));
 }
 assert.ok(summary.includes('Verilio version: v9.8.7-test'));
 assert.ok(summary.includes('Source commit: ' + '1'.padStart(40, '0')));

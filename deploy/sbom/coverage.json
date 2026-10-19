@@ -1,0 +1,40 @@
+{
+  "api": [
+    {
+      "name": "libc6",
+      "purl_prefix": "pkg:deb/"
+    },
+    {
+      "name": "node",
+      "version": "24.1.0",
+      "purl_prefix": "pkg:generic/"
+    },
+    {
+      "name": "fastify",
+      "version": "5.12.1",
+      "purl_prefix": "pkg:npm/"
+    },
+    {
+      "name": "pg",
+      "version": "8.23.0",
+      "purl_prefix": "pkg:npm/"
+    },
+    {
+      "name": "@react-pdf/renderer",
+      "version": "4.9.0",
+      "purl_prefix": "pkg:npm/"
+    }
+  ],
+  "gateway": [
+    {
+      "name": "musl",
+      "purl_prefix": "pkg:apk/"
+    },
+    {
+      "name": "github.com/caddyserver/caddy/v2",
+      "version": "v2.10.2",
+      "purl_prefix": "pkg:golang/"
+    }
+  ],
+  "gateway_limitation": "Compiled frontend dependencies are not completely discoverable; this is not a complete shipped-web-dependency inventory."
+}
