@@ -9,6 +9,21 @@ if [[ ! "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || [[ "$version" == "lates
   exit 64
 fi
 
+expected_images=''
+if [[ $# != 1 ]]; then
+  [[ $# == 3 && $2 == --expected-images ]] || { echo 'Expected version [--expected-images <candidate.json>]' >&2; exit 64; }
+  expected_images=$3
+  node "$repo_root/deploy/release-evidence.mjs" check-candidate "$expected_images"
+fi
+assert_test_images() {
+  [[ -n "$expected_images" ]] || return 0
+  node "$repo_root/deploy/release-evidence.mjs" check-candidate "$expected_images"
+  for service in api migrate gateway; do
+    container=$("${compose[@]}" ps --all --quiet "$service")
+    [[ -n "$container" ]] || return 1
+    node "$repo_root/deploy/release-evidence.mjs" container "$expected_images" "$service" "$container"
+  done
+}
 docker image inspect "verilio-api:$version" "verilio-gateway:$version" >/dev/null
 
 "$repo_root/deploy/tests/release-provenance.test.sh"
@@ -57,6 +72,7 @@ trap cleanup EXIT
 
 "${compose[@]}" config --quiet
 "${compose[@]}" up --detach --wait
+assert_test_images
 
 for private_service in api postgres; do
   private_container=$("${compose[@]}" ps --quiet "$private_service")
@@ -101,6 +117,7 @@ docker stats --no-stream \
 
 "${compose[@]}" restart postgres api gateway
 "${compose[@]}" up --detach --wait
+assert_test_images
 "$repo_root/deploy/smoke-test.sh" "http://127.0.0.1:$port"
 
 created_backup=$(
@@ -110,8 +127,10 @@ created_backup=$(
     "$repo_root/deploy/backup.sh" "$version" daily
 )
 
+assert_test_images
 VERILIO_COMPOSE_FILE="$repo_root/compose.prod.yml" \
 VERILIO_ENV_FILE="$env_file" \
   "$repo_root/deploy/restore-drill.sh" "$created_backup"
 
+assert_test_images
 echo "Disposable production release test passed for $version."

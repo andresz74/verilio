@@ -51,7 +51,7 @@ commands = [
   'pnpm db:migrate', 'pnpm db:generate', 'test -z "$(git status --porcelain)"',
   'pnpm lint', 'pnpm typecheck', 'pnpm test', 'pnpm test:integration',
   'pnpm test:e2e', 'pnpm test:deploy', 'pnpm build',
-  './deploy/build-release.sh "$VERSION"', './deploy/test-release.sh "$VERSION"',
+  './deploy/build-release.sh "$VERSION"', './deploy/test-release.sh "$VERSION" --expected-images "$RUNNER_TEMP/verilio-sbom/candidate.json"',
   './deploy/export-release.sh "$VERSION" "$RUNNER_TEMP/verilio-export"'
 ]
 positions = commands.map { |command| before_login.lines.find_index { |line| line.strip == command } }
@@ -69,7 +69,18 @@ check.call('build once, pin pre-gate IDs and compare after testing/export before
 after_login = steps[(login_index + 1)..-1].map { |step| step.fetch('run', '') }.join("\n")
 check.call('publication invokes helper after login, with no rebuild or floating tags',
   after_login.include?('./deploy/publish-release-images.sh "$VERSION"') &&
+  after_login.include?('--evidence-dir') &&
   !after_login.match?(/build-release|buildx build|docker build|docker pull|:(latest|alpha|stable|v0\.1|v1)\b/))
+evidence_upload = steps.index { |step| step['name'] == 'Preserve required pre-publication evidence' }
+revalidate = steps.index { |step| step['name'] == 'Revalidate evidence before authentication' }
+check.call('paired SBOM gate and mandatory artifact upload precede login',
+  evidence_upload < revalidate && revalidate < login_index &&
+  steps[evidence_upload]['if'].nil? && steps[evidence_upload]['continue-on-error'].nil? &&
+  before_login.include?('./deploy/generate-release-sbom.sh') && before_login.include?('release-evidence.mjs validate'))
+uploads = steps.select { |step| step.fetch('uses', '').start_with?('actions/upload-artifact@') }
+check.call('bounded explicit artifact allowlist excludes logs and credentials',
+  uploads.length == 3 && uploads.all? { |step| step['with']['retention-days'] == 30 && !step['with']['path'].match?(/\*|docker|stderr|scanner/) } &&
+  steps[evidence_upload]['with']['if-no-files-found'] == 'error')
 cleanup = steps.last
 check.call('development PostgreSQL has immediate trap and always cleanup including failures',
   before_login.include?("trap 'docker compose -f docker-compose.yml down --volumes --remove-orphans' EXIT") &&
