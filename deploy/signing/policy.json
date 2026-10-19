@@ -1,0 +1,18 @@
+{
+  "schema": "verilio.signer-policy/v1",
+  "version": "1",
+  "official_signing_enabled": false,
+  "experiment": "pending-owner-authorized-GHCR-OIDC-validation",
+  "first_required_release": null,
+  "issuer": "https://token.actions.githubusercontent.com",
+  "repository": "andresz74/verilio",
+  "workflow": ".github/workflows/publish-images.yml",
+  "platform": "linux/amd64",
+  "contexts": {"push": "refs/tags/{version}", "workflow_dispatch": "refs/heads/main"},
+  "predicate_type": "https://sigstore.dev/cosign/sign/v1",
+  "bundle_media_type": "application/vnd.dev.sigstore.bundle+json;version=0.3",
+  "denied_versions": ["v0.1.1-alpha.5"],
+  "denied_sources": [],
+  "denied_invocations": [],
+  "historical_contexts": []
+}

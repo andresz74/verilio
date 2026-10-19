@@ -344,12 +344,38 @@ test("successful publication receipt requires both anonymous results and preserv
   );
   assert.equal(receipt.images.api.config_digest, ids.api);
   assert.equal(receipt.images.api.manifest_digest, manifest);
+  const completed = run(["validate-publication", accepted]);
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(JSON.parse(completed.stdout).publication, "verified");
   assert.equal(checksum(path.join(accepted, "api.spdx.json")), before);
   assert.notEqual(
     run(["publish-receipt", accepted, manifest, manifest]).status,
     0,
   );
 });
+for (const [name, mutate] of [
+  ["failed publication", (p) => { p.publication = "failed"; }],
+  ["wrong evidence checksum", (p) => { p.evidence_sha256 = "0".repeat(64); }],
+  ["wrong source", (p) => { p.source_commit = "f".repeat(40); }],
+  ["wrong workflow", (p) => { p.workflow.run_attempt = "9"; }],
+  ["missing anonymous verification", (p) => { p.images.gateway.anonymous = "failed"; }],
+  ["wrong config identity", (p) => { p.images.api.config_digest = manifest; }],
+  ["malformed manifest", (p) => { p.images.gateway.manifest_digest = "tag"; }],
+]) {
+  test(`completed-publication read-only validator rejects ${name}`, () => {
+    const file = path.join(accepted, "publication.json");
+    const original = fs.readFileSync(file);
+    try {
+      assert.equal(run(["validate-publication", accepted]).status, 0);
+      const p = JSON.parse(original);
+      mutate(p);
+      fs.writeFileSync(file, JSON.stringify(p));
+      assert.notEqual(run(["validate-publication", accepted]).status, 0);
+    } finally {
+      fs.writeFileSync(file, original);
+    }
+  });
+}
 for (const [name, edit] of [
   ["wrong scanner version", (x) => x.replace("1.54.1", "0.0.0")],
   [

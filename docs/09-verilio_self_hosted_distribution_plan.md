@@ -884,7 +884,12 @@ cannot establish complete bundled-frontend dependency coverage. Unsigned evidenc
 does not independently authenticate the publisher; alpha.5 has no retroactive
 D11.1 evidence. See [SBOM evidence](../deploy/SBOM_EVIDENCE.md).
 
-D11.2–D11.6 remain unimplemented. Official repositories, amd64 runtime/archive
+D11.2 signing/consumer-verification infrastructure is prepared with official signing
+disabled by default. GHCR/OIDC compatibility, full paired portable verification and
+the release cutover require separately authorized validation and owner activation;
+no existing release is described as signed. See
+[signature verification](../deploy/SIGNATURE_VERIFICATION.md).
+D11.3–D11.6 remain unimplemented. Official repositories, amd64 runtime/archive
 contracts and existing platform validation claims remain unchanged.
 
 Possible later work:

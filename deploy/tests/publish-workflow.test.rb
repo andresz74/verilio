@@ -41,7 +41,7 @@ check.call('GHCR login uses only actor and GITHUB_TOKEN',
   login['with']['registry'] == 'ghcr.io' &&
   login['with']['username'] == '${{ github.actor }}' &&
   login['with']['password'] == '${{ secrets.GITHUB_TOKEN }}' &&
-  text.scan(/secrets\.([A-Za-z_][A-Za-z0-9_]*)/).flatten == ['GITHUB_TOKEN'])
+  text.scan(/secrets\.([A-Za-z_][A-Za-z0-9_]*)/).flatten.uniq == ['GITHUB_TOKEN'])
 before_login = steps[0...login_index].map { |step| step.fetch('run', '') }.join("\n")
 commands = [
   './deploy/verify-official-release-source.sh "$VERSION"',
@@ -142,6 +142,48 @@ Dir.mktmpdir('verilio-upload-contract-') do |dir|
       status.success? && error.empty? && File.read(log).include?(" delivery #{expected}\n") &&
       (outcome == 'success' ? File.read(summary).empty? : File.read(summary).include?('Never blindly republish')) &&
       !delivery['run'].match?(/publish-release-images|docker|build-release/))
+  end
+end
+sign = workflow['jobs']['sign']
+sign_steps = sign['steps']
+check.call('official signing remains literally disabled on merge',
+  sign['if'] == "${{ false && needs.publish.result == 'success' }}" && sign['needs'] == 'publish' &&
+  !text.include?('vars.') && !triggers['workflow_dispatch']['inputs'].key?('sign'))
+check.call('only fresh isolated signing job receives OIDC',
+  job.fetch('permissions', workflow['permissions'])['id-token'].nil? &&
+  sign['permissions'] == {'contents'=>'read', 'actions'=>'read', 'packages'=>'write', 'id-token'=>'write'} &&
+  sign['runs-on'] == 'ubuntu-24.04')
+check.call('signer executes workflow implementation SHA rather than artifact or application code',
+  sign_steps.first['with']['ref'] == '${{ github.workflow_sha }}' && sign_steps.first['with']['persist-credentials'] == false)
+transfer = sign_steps.find { |s| s['name'].start_with?('Retrieve exact') }
+check.call('exact producer artifact IDs and complete publication validation precede signing auth',
+  job['outputs']['qualified_artifact'] == '${{ steps.qualified_evidence.outputs.artifact-id }}' &&
+  job['outputs']['publication_artifact'] == '${{ steps.final_evidence.outputs.artifact-id }}' &&
+  transfer['env']['QUALIFIED_ARTIFACT'] == '${{ needs.publish.outputs.qualified_artifact }}' &&
+  transfer['env']['PUBLICATION_ARTIFACT'] == '${{ needs.publish.outputs.publication_artifact }}' &&
+  transfer['run'].include?('validate-publication') &&
+  sign_steps.index(transfer) < sign_steps.index { |s| s['name'] == 'Authenticate signature attachment only' })
+check.call('signing job never builds, retags, republishes or invokes SBOM generator',
+  !sign_steps.map { |s| s.fetch('run', '') }.join("\n").match?(/build-release|publish-release-images|generate-release-sbom|docker (build|tag|push)/))
+sign_upload = sign_steps.find { |s| s['id'] == 'signing_evidence' }
+check.call('signature artifacts preserve allowlisted partial evidence and upload failure is fatal',
+  sign_upload['if'] == 'always()' && sign_upload['continue-on-error'].nil? &&
+  sign_upload['with']['retention-days'] == 30 && sign_upload['with']['if-no-files-found'] == 'error' &&
+  !sign_upload['with']['path'].match?(/\*|credential|stderr|\.tmp/) &&
+  sign_upload['with']['path'].include?('/attempt-status.json') && sign_upload['with']['path'].include?('/portable/verification.json'))
+check.call('every new action is full-SHA pinned and shell blocks parse',
+  sign_steps.all? { |s|
+    (!s['uses'] || s['uses'].match?(/@[0-9a-f]{40}\z/)) &&
+      (!s['run'] || Open3.capture3('bash', '-n', stdin_data: s['run']).last.success?)
+  })
+Dir.mktmpdir('verilio-sign-delivery-') do |dir|
+  [['success', 'success', 'paired-verified'], ['success', 'failure', 'incomplete'], ['failure', 'success', 'incomplete']].each do |signing, artifact, expected|
+    summary = File.join(dir, 'summary')
+    File.write(summary, '')
+    _, error, status = Open3.capture3({'SIGNING'=>signing, 'DELIVERY'=>artifact, 'GITHUB_STEP_SUMMARY'=>summary}, 'bash', '-e', '-o', 'pipefail', '-c', sign_steps.last['run'])
+    check.call("signing #{signing} / artifact #{artifact} reports #{expected}",
+      status.success? && error.empty? && File.read(summary).include?("Signing acceptance: #{expected};") &&
+      !sign_steps.last['run'].match?(/sign-release-images|publish-release-images|docker/))
   end
 end
 puts "#{passed} publishing workflow contract tests passed including upload failure execution."
