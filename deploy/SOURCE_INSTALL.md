@@ -1,10 +1,11 @@
 # Fresh Private Source Installation
 
-**IMPLEMENTED — OPERATIONAL CLEAN-HOST VALIDATION PENDING**
+**D10 COMPLETE — VALIDATED ON THE TESTED PRIVATE UBUNTU 26.04.1 `linux/amd64` VM**
 
-D10 is in progress. The scripts and offline checks are prepared; installation, reboot,
-recovery and update handoff still require qualification on a fresh disposable Ubuntu
-Server 24.04.5 LTS `linux/amd64` VM. This guide makes no validated-host compatibility claim.
+Fresh installation, lifecycle persistence, same-source updater handoff, logical backup/restore,
+health/smoke and restored Business Settings UI passed on the disposable Ubuntu VM. See the
+[qualification record](#operational-qualification-and-remaining-limits). This is not a claim of
+universal Linux support, cross-version upgrade qualification, or direct public Internet readiness.
 
 ## Choose the correct path
 
@@ -15,18 +16,19 @@ separate [release/runbook operations](../docs/08-private_alpha_self_hosted_deplo
 This installer accepts no release tag and publishes nothing.
 
 The installer runs canonical `compose.prod.yml`: PostgreSQL → migrate → API → Gateway.
-It does not create a second production stack or change the existing snapshot updater.
+It does not create a second production stack. Future private-main updates use the existing
+snapshot updater; D10 narrowly fixes its privileged invocation for sudo PTY compatibility.
 
 ## Prerequisites and protected host selection
 
-Prepare an ordinary private Linux amd64 host. Ubuntu Server 24.04.5 LTS is the **proposed
-first qualification target**, not yet a validated D10 environment. Install dependencies
-through the operator's reviewed OS/Docker procedures before invoking Verilio:
+The qualified environment is a disposable private Ubuntu 26.04.1 `linux/amd64` VM. Other
+OS/version combinations are not qualified by that test. Install dependencies through the
+operator's reviewed OS/Docker procedures before invoking Verilio:
 
 - Git with a full, non-shallow checkout of `andresz74/verilio`.
 - Local rootful Docker Engine, Buildx and the Docker Compose plugin. Deployment-user and
   sudo Docker access must resolve to the same local daemon; remote contexts are refused.
-- Bash, sudo, OpenSSL, curl, **jq**, iproute2 (`ss`) and GNU/Linux utilities: awk, sed,
+- Bash, sudo, util-linux (`setsid` with `--wait`), OpenSSL, curl, **jq**, iproute2 (`ss`) and GNU/Linux utilities: awk, sed,
   grep, find, sort, xargs, cmp, stat, install, readlink, tar, gzip, sha256sum, free, df,
   mktemp, uname, id, dirname, mkdir, mv, cp, chmod, chown, cat, wc, tr, tee, ln, rmdir,
   rm, sh and env.
@@ -55,7 +57,8 @@ VERILIO_SOURCE_INSTALL_WORK_ROOT=/path/to/disk-backed/workspace \
 
 Build/export staging can retain images and multiple compressed archives simultaneously.
 Inspect `free -h`, `df -h` and `docker system df`; provision sufficient additional headroom.
-The proposed lab allocation is 4 vCPU, 8 GiB RAM and 60 GiB disk, not a measured minimum.
+The preflight proposed 4 vCPU, 8 GiB RAM and 60 GiB disk as lab sizing, not a qualified
+minimum. Do not infer universal capacity requirements from that proposal or one VM test.
 
 The installer installs no apt/Docker dependencies, creates no swap, changes no firewall and
 performs no Docker pruning. Confirm the intended host/context before proceeding. Port 8080
@@ -170,8 +173,9 @@ sudo docker compose --env-file /etc/verilio/verilio.env \
 ```
 
 Smoke covers SPA root/deep route, live/readiness and connected database. First use:
-Settings → Business → Client → Project → optional Tasks → Timer. VM qualification will
-record a recognizable Business Settings value and verify persistence through recreation/reboot.
+Settings → Business → Client → Project → optional Tasks → Timer. Qualification verified a
+recognizable Business Settings value through recreation, reboot and isolated restore; verify
+your own known data after operations rather than treating health alone as persistence proof.
 
 ## Failure, refusal and resume
 
@@ -245,10 +249,17 @@ permissions to create updater scratch space.
 
 Despite its historical name, its scope is an **already-configured private host**. It fetches
 trusted current main, takes backups and uses the existing snapshot/provenance/deployment guards.
-It does not provide bootstrap or a pinned arbitrary-release updater. **D10 handoff compatibility
-is not operationally validated yet**; the clean-host VM gate must prove it. Tagged archive updates
-remain the separate official release/runbook workflow. No cross-version upgrade qualification
-is implied by this document.
+It does not provide bootstrap or a pinned arbitrary-release updater. **Same-source D10 handoff
+passed on the tested Ubuntu VM**, reusing the verified immutable snapshot and preserving owner,
+secrets, volume and Business Settings. Tagged archive updates remain the separate official
+release/runbook workflow. No cross-version upgrade qualification is implied by this test.
+
+Ubuntu's sudo `use_pty` exposed stopped backup subprocesses during qualification. The updater
+now runs the whole privileged server-deploy command in the foreground with
+`sudo -n setsid --wait`, detached stdin and separate output logs after early `sudo -v`.
+It accepts non-empty stderr on exit 0 because Compose writes progress there. The installer
+baseline backup uses the same detached-session mechanism with its stricter single-path output
+contract. Neither `backup.sh` nor `server-deploy.sh` was modified.
 
 ## Backup, recovery and safe stop
 
@@ -259,9 +270,22 @@ copies. Take and verify a backup before every future update; test an isolated re
 relying on recovery.
 
 The existing full `restore-drill.sh`/`verify-data.sh` expects populated Invoice/domain fixtures;
-it is not a fresh Settings-only install gate. Real D10 qualification still needs an isolated
-logical restore of its actual data with the same owner and original Settings value. Do not
-weaken comprehensive existing restore tests or call a fresh Settings-only restore that full gate.
+it is not a fresh Settings-only install gate. D10 separately passed an isolated logical restore
+of its actual Settings data with the same owner and original Settings value. This does not
+replace or weaken the comprehensive fixture-based domain/Invoice/PDF restore gate.
+
+For a diagnostic restore, preserve the active installation and create a new Compose project,
+unused named volume, distinct loopback port and protected recovery config. Retain the same
+`LOCAL_USER_ID` and exact compatible application images; never restore over existing data.
+Start PostgreSQL alone: its initializer creates the role/database, not application tables.
+Verify the backup checksums, restore into the schema-empty database, and capture the restore
+exit status and verbose diagnostics before starting migrations/API. Compose `exec -T` keeps
+stdin attached; raw `docker exec` needs `-i` when streaming a dump. Non-empty verbose stderr
+is expected and is not itself a restore failure. Require successful restore plus immediate
+row/owner counts, then repeat counts after startup and verify the original Settings through
+the Verilio API and the correctly identified browser instance. Do not create replacement data
+to make a restore appear successful. Preserve evidence on any discrepancy; no automatic
+cleanup of diagnostic recovery resources is implied.
 Schema-incompatible rollback preserves the upgraded volume and restores the pre-update backup
 into a separate compatible recovery target; never automate destructive down migrations.
 
@@ -278,3 +302,40 @@ normal stop or update. Failed install cleanup removes only invocation-owned temp
 never secrets, volumes, immutable releases or backups.
 
 No ARM64, public hosting, D09 or D11 compatibility/qualification claims are made here.
+
+## Operational qualification and remaining limits
+
+D10 is complete for the tested private Ubuntu 26.04.1 `linux/amd64` VM; operational evidence and
+owner acceptance are recorded on [issue #50](https://github.com/andresz74/verilio/issues/50).
+
+- Fresh-install implementation identity: `f4bbac67d13b652e3be440af17a176cfab2bf1ac`.
+- Selected application source: `cc583e40d138a176e7e05e5092514d5585f001be`, version
+  `main-cc583e40d138`; local `verilio-api` / `verilio-gateway` images, PostgreSQL `17.9-alpine`.
+- Updater handoff identity: `79aa84c95080e5a3e101d02ac6eb98736f2b5808`, using
+  `VERILIO_SNAPSHOT_WORK_ROOT=/var/tmp`; the selected application source/version did not change.
+- Fresh install verified protected state/receipt permissions, baseline backup checksums,
+  healthy PostgreSQL/API/Gateway, migrate exit 0, live/readiness and SPA/deep-route smoke.
+  Completed-install rerun correctly refused without regenerating owner/secrets.
+- Business Settings persisted through stop/start, forced container recreation, guest reboot
+  and the same-source update. The same stable `LOCAL_USER_ID` and `verilio_pgdata` were preserved;
+  only Gateway was published, at `127.0.0.1:8080`.
+- The **third isolated restore** used the previously selected October 18 backup, matching
+  script SHA-256, separate project/volume, independent recovery credentials, the same owner,
+  and loopback port 19853. Backup checksums and `pg_restore` exit 0 passed. Immediate and
+  post-start counts were `users=1`, `business_profiles=1`, with matching owner counts.
+  Health/smoke and Settings API assertions passed. The operator then confirmed the original
+  `D10 Source Install Validation` Business Name in the third instance's Settings UI through a
+  separate SSH tunnel, without modifying it. See [restore execution evidence](https://github.com/andresz74/verilio/issues/50#issuecomment-6256412232)
+  and [UI acceptance](https://github.com/andresz74/verilio/issues/50#issuecomment-6256452208).
+
+**Unresolved diagnostic observation:** the first recovery instance was healthy but had zero
+users/business_profiles rows despite those rows being present in the verified backup. Its exact
+failure cause remains unexplained. The successful third restore proves this tested recovery
+path; it does not prove that a missing stdin flag, sudo PTY, ownership, migrations or backup
+corruption caused the first failure. The earlier recovery-success note was corrected after a
+wrong browser tab was identified. Preserve the original, first recovery and third environments,
+volumes and private evidence until explicit teardown approval; D10 closeout authorizes no deletion.
+
+Qualification covers Settings-only data and a same-source update, not a full fixture restore or
+cross-version upgrade/rollback matrix. No release tags, GHCR publication, ARM64/multi-architecture,
+public hosting, D09 or D11 support follows from this validation. No NC110 deployment was used.

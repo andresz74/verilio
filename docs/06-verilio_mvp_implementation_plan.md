@@ -6,7 +6,7 @@
 **Document:** MVP Implementation Plan  
 **File:** `docs/06-verilio_mvp_implementation_plan.md`  
 **Status:** Draft v0.1; core MVP complete, distribution workstream active\
-**Distribution revision:** 2026-10-11\
+**Distribution revision:** 2026-10-18\
 **Depends on:**
 
 - `docs/01-verilio_product_requirements_document.md`
@@ -2180,7 +2180,7 @@ Deliver:
 `linux/amd64` path with required bootstrap and trusted-private-interface configuration.
 D08 is complete for the tested private Portainer CE 2.45.1 Docker Standalone path
 with required bootstrap, explicit environment, private-IP binding and host boot readiness.
-D09–D11 remain planned; cross-version CasaOS/Portainer upgrade validation remains pending.
+D09 and D11 remain planned; cross-version CasaOS/Portainer upgrade validation remains pending.
 
 Order:
 
@@ -2191,7 +2191,10 @@ Order:
 
 ## D5 — Fresh Source-Based Installer
 
-**Status:** Planned.
+**Status:** Complete for the initial trusted private-main source path tested on a disposable
+Ubuntu 26.04.1 `linux/amd64` VM (D10 / issue #50). Fresh install, lifecycle persistence,
+same-source update handoff and isolated Settings-data restore passed; cross-version upgrades
+and broader OS/platform qualification remain outside this result.
 
 Deliver:
 
@@ -2317,7 +2320,7 @@ and the immutable alpha.5 API/Gateway images with `postgres:17.9-alpine`.
   rerunning bootstrap recovered the original data and preserved the same stable
   `LOCAL_USER_ID`.
 
-D09–D11 remain planned. Cross-version CasaOS upgrade validation remains pending.
+D09 and D11 remain planned. Cross-version CasaOS upgrade validation remains pending.
 This is not one-click or universal CasaOS compatibility; D07 alone does not establish Portainer,
 Proxmox, ARM64/multi-architecture, cross-version upgrade/restore qualification, or public
 Internet readiness.
@@ -2355,7 +2358,27 @@ Verified images/digests:
 
 Only same-version alpha.5 Docker Standalone lifecycle is validated. Cross-version upgrades
 remain pending; no universal Portainer, Swarm, Kubernetes, Edge Stack, Business Edition-specific,
-ARM64 or public Internet readiness claim is made. D09–D11 remain planned.
+ARM64 or public Internet readiness claim is made. D09 and D11 remain planned.
+
+**D10 — COMPLETE** — [issue #50](https://github.com/andresz74/verilio/issues/50).
+The [fresh source-install guide](../deploy/SOURCE_INSTALL.md) documents the tested private
+Ubuntu 26.04.1 `linux/amd64` path: deployment-user invocation, exact trusted-main source,
+Docker builds, protected stable owner/secrets, immutable local `main-<sha12>` images and
+canonical loopback-only Compose. No host Node/pnpm or second runtime is required.
+
+- Fresh installer commit `f4bbac67d13b652e3be440af17a176cfab2bf1ac` built application source
+  `cc583e40d138a176e7e05e5092514d5585f001be` as `main-cc583e40d138`.
+- Healthy PostgreSQL/API/Gateway, migrate exit 0, live/readiness and smoke passed. Settings
+  survived stop/start, real recreation, guest reboot and the same-source updater handoff at
+  `79aa84c95080e5a3e101d02ac6eb98736f2b5808`, with unchanged owner, secrets and named volume.
+- The third isolated restore of the selected October 18 backup passed checksum/script identity
+  checks, `pg_restore` exit 0, immediate/post-start user/profile and owner counts, health/smoke,
+  API Settings and operator verification of the original Business Name in the restored UI.
+  See [accepted recovery evidence](https://github.com/andresz74/verilio/issues/50#issuecomment-6256452208).
+- The first empty recovery remains an **unexplained diagnostic observation**, not a proven
+  backup/restore root cause. The original and both recovery environments/evidence are preserved.
+  This Settings-only restore and same-source update do not qualify full domain fixtures,
+  cross-version upgrades, public hosting or additional architectures. D09 and D11 remain planned.
 
 D02 consumes the canonical runtime, not a second production Compose stack. D03 establishes
 registry identity and release eligibility before D04 publishing. Each slice uses one issue,
