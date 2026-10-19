@@ -30,6 +30,7 @@ does not imply public SaaS readiness.
 | [Prebuilt private self-host](deploy/SELF_HOSTING.md) | Install the validated private `linux/amd64` path using official GHCR images. | Docker Engine + Compose and standard shell utilities; no runtime Node/pnpm/source builds. Package generated on a separate trusted preparation machine. |
 | [CasaOS private package](deploy/casaos/README.md) | CasaOS v0.4.15 compatibility validated on the tested private Debian 12 `linux/amd64` environment. | Required root/sudo bootstrap and trusted-private-interface configuration; not one-click. Cross-version CasaOS upgrades remain unvalidated. |
 | [Portainer private stack](deploy/portainer/README.md) | Portainer CE 2.45.1 Docker Standalone validated on private Debian 12 `linux/amd64`, Docker Engine 29.8.1. | Required bootstrap, explicit Stack variables, trusted-private-IP binding and address readiness before Docker restore; same-version alpha.5 lifecycle only. |
+| [Fresh private source install](deploy/SOURCE_INSTALL.md) | D10 validated on a disposable Ubuntu 26.04.1 `linux/amd64` VM; builds exact trusted-main source into the canonical private runtime. | Clean full Git checkout, local rootful Docker + Buildx/Compose, sudo and documented Linux utilities; no host Node/pnpm. Loopback Gateway; private SSH tunnel for remote access. |
 | [Private-alpha snapshot](#private-alpha-deployment) | Update an already-configured private host from exact fetched `origin/main`. | Git, local Docker with buildx/Compose, deployment-user permissions, and existing host configuration. Not a fresh-server installer. |
 | [Official tagged release](#official-release-workflow) | Build/test/export a strict immutable release off-host. | Clean tagged source and full release gate on the build machine; Docker Compose on the runtime destination. |
 
@@ -147,7 +148,7 @@ setup, run as the deployment user (not with sudo):
 
 ```sh
 cd /srv/verilio/source
-./deploy/nc110-deploy-main.sh
+VERILIO_SNAPSHOT_WORK_ROOT=/var/tmp ./deploy/nc110-deploy-main.sh
 ```
 
 This fetches exact `origin/main`, builds in a detached worktree, and deploys an
@@ -155,6 +156,22 @@ immutable `main-<sha>` snapshot (12-character prefix; full SHA in the manifest).
 It creates no Git tag and is **private dogfooding, not an official release or
 a fresh-server installer**. No host Node/pnpm toolchain is required; Docker
 performs the build. Snapshot deployment does not replace the full release gate.
+
+## Fresh private source installation
+
+For a new host, follow the [source-install guide](deploy/SOURCE_INSTALL.md), provision its
+prerequisites, and run from a clean official checkout as the deployment user (not root):
+
+```sh
+./deploy/install-from-source.sh --ref origin/main
+```
+
+The installer pins a full trusted-main SHA, builds local `main-<sha12>` images, and reuses
+canonical Compose and release/provenance/deployment helpers. It creates protected owner/secrets
+once, keeps Gateway loopback-only, and refuses fresh-install reuse after completion. D10 passed
+fresh install, lifecycle persistence, same-source updater handoff and an isolated logical restore
+on the tested Ubuntu VM. This does not qualify cross-version upgrades or public hosting; the
+prebuilt-image path and official tagged release workflow remain separate.
 
 ## Official release workflow
 
