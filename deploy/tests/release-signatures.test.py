@@ -77,6 +77,43 @@ class Contracts(unittest.TestCase):
         self.assertNotEqual(X['source'], CTX[2])
         self.assertTrue(s.context(*CTX, X, P).endswith('@refs/heads/main'))
 
+    def test_workflow_assertion_is_not_certificate_sha(self):
+        b = bundle()
+        t = json.loads(base64.b64decode(b['dsseEnvelope']['payload']))
+        t['subject'][0]['annotations']['verilio.workflow'] = 'd' * 40
+        b['dsseEnvelope']['payload'] = base64.b64encode(json.dumps(t).encode()).decode()
+        _, command = self.verify(b)
+        # The signed workflow assertion is not an independently certified claim.
+        self.assertEqual(command[command.index('--certificate-github-workflow-sha') + 1], CTX[2])
+        self.assertNotEqual(CTX[2], X['source'])
+        self.assertNotIn('d' * 40, command)
+
+    def test_tag_source_invocation_confusion_rejected(self):
+        with self.assertRaises(ValueError):
+            s.context('push', 'refs/tags/' + X['version'], CTX[2], CTX[3], X, P)
+
+    def test_pair_workflow_assertion_mismatch(self):
+        for service in s.SERVICES:
+            (self.dir / f'{service}.manifest.json').write_text('{}')
+            (self.dir / f'{service}.config.json').write_text('{}')
+        with patch.object(s, 'check_material'), patch.object(s, 'verify_bundle', side_effect=[(*CTX, '1'), (CTX[0], CTX[1], CTX[2], 'd' * 40, '1')]):
+            with self.assertRaisesRegex(ValueError, 'Mixed signing contexts'):
+                s.verify_directory(self.dir, X, P, '/cosign')
+
+    def test_duplicate_json_fields(self):
+        with self.assertRaises(ValueError): s.decode_json('{"verilio.source":"first","verilio.source":"second"}')
+
+    def test_nonfinite_json(self):
+        with self.assertRaises(ValueError): s.decode_json('{"value":NaN}')
+
+    def test_fifo_refused_without_blocking(self):
+        fifo = self.dir / 'fifo'; os.mkfifo(fifo)
+        with self.assertRaises(ValueError): s.load(fifo)
+
+    def test_bounded_read(self):
+        f = self.dir / 'large'; f.write_text('{} ')
+        with self.assertRaises(ValueError): s.read_regular(f, limit=2)
+
     def test_tag_identity(self):
         self.assertTrue(s.context('push', 'refs/tags/' + X['version'], X['source'], 'c' * 40, X, P).endswith('@refs/tags/' + X['version']))
 
@@ -89,6 +126,7 @@ class Contracts(unittest.TestCase):
             self.assertEqual(command[command.index(flag) + 1], value)
         self.assertNotIn('--check-claims=false', command)
         self.assertNotIn('--insecure-ignore-tlog', command)
+        self.assertIn('--check-claims=true', command)
 
     def test_crypto_failure_not_accepted(self):
         f = self.dir / 'bad.json'; f.write_text(json.dumps(bundle()))
@@ -207,6 +245,36 @@ class Contracts(unittest.TestCase):
     def test_no_http(self):
         with self.assertRaises(ValueError): s.get('http://example.com')
 
+    def test_no_ambient_proxy_credentials(self):
+        with patch.object(s.urllib.request, 'ProxyHandler') as proxy, patch.object(s.urllib.request, 'build_opener') as opener:
+            opener.return_value.open.return_value.__enter__.return_value.read.return_value = b'{}'
+            with patch.dict(os.environ, {'HTTPS_PROXY': 'https://user:mock-only@invalid'}):
+                self.assertEqual(s.get('https://example.invalid'), b'{}')
+            proxy.assert_called_once_with({})
+
+    def test_referrer_index_missing_not_empty(self):
+        registry = object.__new__(s.Registry)
+        with patch.object(registry, 'fetch', return_value=b'{}'):
+            with self.assertRaises(ValueError): registry.bundles(X['api'])
+
+    def test_referrer_wrong_layer_type(self):
+        b = b'bundle'
+        manifest = {'artifactType': P['bundle_media_type'], 'mediaType': 'application/vnd.oci.image.manifest.v1+json', 'subject': {'digest': X['api']}, 'layers': [{'digest': 'sha256:' + s.sha(b), 'mediaType': 'application/json'}]}
+        raw = json.dumps(manifest).encode()
+        index = {'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.index.v1+json', 'manifests': [{'artifactType': P['bundle_media_type'], 'digest': 'sha256:' + s.sha(raw)}]}
+        registry = object.__new__(s.Registry)
+        with patch.object(registry, 'fetch', side_effect=[json.dumps(index).encode(), raw]):
+            with self.assertRaises(ValueError): registry.bundles(X['api'])
+
+    def test_referrer_native_mapping(self):
+        b = json.dumps(bundle()).encode()
+        manifest = {'artifactType': P['bundle_media_type'], 'mediaType': 'application/vnd.oci.image.manifest.v1+json', 'subject': {'digest': X['api']}, 'layers': [{'digest': 'sha256:' + s.sha(b), 'mediaType': P['bundle_media_type']}]}
+        raw = json.dumps(manifest).encode()
+        index = {'schemaVersion': 2, 'mediaType': 'application/vnd.oci.image.index.v1+json', 'manifests': [{'artifactType': P['bundle_media_type'], 'digest': 'sha256:' + s.sha(raw)}]}
+        registry = object.__new__(s.Registry)
+        with patch.object(registry, 'fetch', side_effect=[json.dumps(index).encode(), raw, b]):
+            self.assertEqual(registry.bundles(X['api']), [b])
+
     def test_sign_no_build_or_retag(self):
         import inspect
         body = inspect.getsource(s.sign)
@@ -239,6 +307,7 @@ for name, edit in {
     'nonempty_predicate': lambda b, t: t.update(predicate={'qualification': 'passed'}),
     'wrong_repository': lambda b, t: t['subject'][0]['annotations'].update({'verilio.repository': 'ghcr.io/evil/copy'}),
     'wrong_source': lambda b, t: t['subject'][0]['annotations'].update({'verilio.source': 'f' * 40}),
+    'workflow_commit_as_source': lambda b, t: t['subject'][0]['annotations'].update({'verilio.source': CTX[3]}),
     'wrong_version': lambda b, t: t['subject'][0]['annotations'].update({'verilio.version': 'v1.0.0'}),
     'wrong_platform': lambda b, t: t['subject'][0]['annotations'].update({'verilio.platform': 'linux/arm64'}),
     'mixed_pair': lambda b, t: t['subject'][0]['annotations'].update({'verilio.gateway': X['api']}),
@@ -357,10 +426,19 @@ def portable_case(name, failure):
             (self.dir / 'api.config.json').unlink(); (self.dir / 'api.config.json').symlink_to(self.dir / 'gateway.config.json')
         (self.dir / 'verification.json').write_text(json.dumps(record))
         if failure:
-            with self.assertRaises(ValueError): s.validate_portable(self.dir)
+            with patch.object(s, 'verify_directory') as verify:
+                with self.assertRaises(ValueError): s.verify_portable(self.dir, x, P, '/cosign')
+                verify.assert_not_called()
         else:
-            with patch.object(s, 'get', side_effect=AssertionError('offline must not use network')):
+            def inspect_snapshot(directory, *args):
+                self.assertNotEqual(directory, self.dir)
+                original = (directory / 'api.sigstore.json').read_bytes()
+                (self.dir / 'api.sigstore.json').write_text('replaced after snapshot')
+                self.assertEqual((directory / 'api.sigstore.json').read_bytes(), original)
+            with patch.object(s, 'get', side_effect=AssertionError('offline must not use network')), patch.object(s, 'verify_directory', side_effect=inspect_snapshot) as verify:
                 self.assertEqual(s.validate_portable(self.dir)['release'], x)
+                s.verify_portable(self.dir, x, P, '/cosign')
+                verify.assert_called_once()
     setattr(Contracts, 'test_portable_' + name, test)
 
 

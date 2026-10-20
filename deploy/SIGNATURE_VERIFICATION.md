@@ -83,6 +83,23 @@ The signing job independently resolves that tag through GitHub and checks its co
 is recorded as a signed workflow assertion and compared across the pair; this does
 not add an unimplemented generic Fulcio-extension verification claim.
 
+The certificate claims enforced by the pinned verifier are explicit:
+
+| Value | Verification boundary |
+| --- | --- |
+| Workflow URI/ref | Exact certificate SAN (`--certificate-identity`) |
+| OIDC issuer | Certificate issuer extension (`--certificate-oidc-issuer`) |
+| Repository, event, invocation ref | Corresponding certificate GitHub extensions |
+| Invocation SHA | Certificate GitHub `sha` extension; never substituted with application or workflow-definition SHA |
+| `verilio.workflow` | Cryptographically signed **assertion by the authorized workflow**, not an independently authenticated `workflow_sha` certificate check |
+| Application SHA | Trusted consumer input, signed annotation and digest-bound OCI revision label; signer also resolves the exact application Git tag |
+
+The configured certificate checks do not authenticate a job/run ID or independently
+prove how application source was built. The certificate may expose additional
+Fulcio extensions; this implementation does not infer unimplemented checks from
+their presence. Pinned source: [certificate options](https://github.com/sigstore/cosign/blob/v3.1.3/cmd/cosign/cli/options/certificate.go),
+[bundle identity enforcement](https://github.com/sigstore/cosign/blob/v3.1.3/pkg/cosign/verify.go).
+
 Signatures carry exactly these v1 annotation names:
 
 ```text
@@ -172,6 +189,9 @@ The implementation requests public GHCR tokens, manifests, configs and native
 referrers without using Docker credentials or GitHub tokens. It validates every
 referenced digest, tag mapping, OCI source/version/revision label and platform,
 then invokes pinned Cosign for each complete native bundle and certificate policy.
+Registry HTTP requests ignore ambient proxy authentication settings. Malformed
+referrers indexes and mismatched artifact/layer media types fail; a missing index
+is not interpreted as an empty set of existing signatures.
 There is no legacy-format or unsigned fallback. Network, missing-evidence and
 identity failures return nonzero; neither image is reported as a verified pair.
 
@@ -198,21 +218,35 @@ and repeats signature, certificate, SCT/transparency, subject and release checks
 ```
 
 The portable path makes no registry requests and uses explicit local roots and an
-empty verification HOME/configuration. It uses Cosign v3.1.3's supported
+empty verification HOME/configuration, including the tool-version probe. It pins
+the input directory inode, opens bounded regular members without following
+symlinks or blocking on FIFOs, and snapshots them into a private temporary directory.
+All checksum and signature checks use that snapshot; replacing the original files
+after validation cannot substitute verification inputs. Duplicate JSON keys and
+non-finite JSON values fail closed. It uses Cosign v3.1.3's supported
 `verify-blob-attestation --bundle ... --trusted-root ... --digest ... --digestAlg sha256`
 with the built-in `https://sigstore.dev/cosign/sign/v1` image-signature statement.
 Cosign v3's native image signing internally uses this envelope; no custom D11.3
-predicate is introduced. Image `cosign verify --bundle` is not a supported interface.
+predicate is introduced. Digest claim checking is explicitly `--check-claims=true`.
+Image `cosign verify --bundle` is not a supported interface.
 Neither `--check-claims=false` nor transparency/SCT bypasses are used. Merely passing
 `--offline` is not proof of an airgapped verifier.
 
-Eight actual cryptographic distribution-fixture checks passed with the pinned Linux
+Fifteen actual cryptographic/CLI distribution-fixture checks passed with the pinned Linux
 binary in a disposable **network-disabled, read-only container**: valid signature,
 wrong identity/issuer/bytes, absent roots, tampered signature, missing transparency,
-and missing required GitHub certificate extension. These demonstrate offline tool
+and missing required GitHub certificate extension. A real upstream Syft GitHub
+certificate additionally passes the complete configured SAN/issuer/repository/
+event/ref/invocation-SHA policy; wrong workflow SAN, SHA, event, ref and repository
+are cryptographically rejected. These demonstrate offline tool
 verification of the upstream fixture, **not** full Verilio native image-bundle or
 paired portable-mode qualification. That complete network-denied acceptance remains
 an activation blocker and must be demonstrated in the approved experiment.
+
+The actual `verify-blob-attestation` command with all configured certificate and
+digest flags was also exercised: the authenticated blob fixture is correctly
+rejected because it lacks a DSSE envelope. This confirms CLI compatibility without
+pretending blob verification proves native image-signature compatibility.
 
 ## Failures, retention and recovery
 

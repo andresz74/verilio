@@ -38,10 +38,34 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def decode_json(data):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            require(key not in result, "Ambiguous duplicate JSON field")
+            result[key] = value
+        return result
+    def invalid_constant(_):
+        raise ValueError("Non-finite JSON value")
+    return json.loads(data, object_pairs_hook=unique, parse_constant=invalid_constant)
+
+
+def read_regular(file, limit=LIMIT, directory_fd=None):
+    # No FIFO blocking or symlink-follow race between lstat and open.
+    try:
+        fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory_fd)
+    except OSError as error:
+        raise ValueError("Cannot open regular evidence file") from error
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        require(stat.S_ISREG(info.st_mode) and info.st_size <= limit, "Invalid bounded regular file")
+        data = stream.read(limit + 1)
+        require(len(data) <= limit, "File exceeds size bound")
+        return data
+
+
 def load(file, limit=LIMIT):
-    file = Path(file)
-    require(file.is_file() and not file.is_symlink() and file.stat().st_size <= limit, "Invalid bounded regular file")
-    return json.loads(file.read_bytes())
+    return decode_json(read_regular(file, limit))
 
 
 def issue(file, data):
@@ -97,6 +121,8 @@ def context(event, ref, invocation, workflow_commit, x, p):
 
 def claims(service, x, p, event, ref, invocation, workflow_commit):
     context(event, ref, invocation, workflow_commit, x, p)
+    # verilio.workflow is an authorized signer's assertion, not a separately
+    # authenticated Fulcio workflow_sha claim. Never use it as OIDC `sha`.
     return {"verilio.policy": p["version"], "verilio.repository": REPOSITORIES[service],
             "verilio.version": x["version"], "verilio.source": x["source"], "verilio.platform": x["platform"],
             "verilio.api": x["api"], "verilio.gateway": x["gateway"], "verilio.event": event,
@@ -107,8 +133,9 @@ def tool(binary):
     pin = load(ROOT / "toolchain.json")
     binary = Path(shutil.which(str(binary)) or binary).resolve(strict=True)
     require(sha(binary.read_bytes()) in pin["executable_sha256"].values(), "Cosign executable checksum mismatch")
-    result = subprocess.run([str(binary), "version", "--json"], capture_output=True, timeout=30, check=True)
-    require(json.loads(result.stdout)["gitVersion"] == pin["version"], "Wrong Cosign version")
+    with tempfile.TemporaryDirectory(prefix="verilio-tool-") as home:
+        result = subprocess.run([str(binary), "version", "--json"], env=cosign_env(home), capture_output=True, timeout=30, check=True)
+    require(decode_json(result.stdout)["gitVersion"] == pin["version"], "Wrong Cosign version")
     return str(binary)
 
 
@@ -130,7 +157,7 @@ def verify_bundle(bundle_file, service, x, p, binary, env):
     require(b.get("verificationMaterial", {}).get("tlogEntries"), "Transparency evidence required")
     envelope = b.get("dsseEnvelope", {})
     require(envelope.get("payloadType") == "application/vnd.in-toto+json" and len(envelope.get("signatures", [])) == 1, "One native image signature required")
-    statement = json.loads(base64.b64decode(envelope["payload"], validate=True))
+    statement = decode_json(base64.b64decode(envelope["payload"], validate=True))
     require(statement.get("_type") == "https://in-toto.io/Statement/v1" and statement.get("predicateType") == p["predicate_type"] and statement.get("predicate") == {}, "Not a built-in image signature")
     require(len(statement.get("subject", [])) == 1, "One exact image subject required")
     subject = statement["subject"][0]
@@ -144,7 +171,7 @@ def verify_bundle(bundle_file, service, x, p, binary, env):
     # These checks select policy, not authenticity. No result is accepted before
     # Cosign validates the DSSE signature, certificate, SCT and tlog under roots.
     command = [binary, "verify-blob-attestation", "--bundle", str(bundle_file), "--trusted-root", str(ROOT / "trusted-root.json"),
-               "--type", p["predicate_type"], "--digest", x[service][7:], "--digestAlg", "sha256",
+               "--type", p["predicate_type"], "--check-claims=true", "--digest", x[service][7:], "--digestAlg", "sha256",
                "--certificate-identity", identity, "--certificate-oidc-issuer", p["issuer"],
                "--certificate-github-workflow-repository", p["repository"], "--certificate-github-workflow-trigger", event,
                "--certificate-github-workflow-ref", ref, "--certificate-github-workflow-sha", invocation]
@@ -154,7 +181,9 @@ def verify_bundle(bundle_file, service, x, p, binary, env):
 
 def get(url, headers=None, limit=LIMIT):
     require(url.startswith("https://"), "HTTPS required")
-    with urllib.request.urlopen(urllib.request.Request(url, headers=headers or {}), timeout=60) as response:
+    # Anonymous registry access must not adopt ambient authenticated proxy settings.
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(urllib.request.Request(url, headers=headers or {}), timeout=60) as response:
         data = response.read(limit + 1)
     require(len(data) <= limit, "Remote response exceeds bound")
     return data
@@ -164,7 +193,7 @@ class Registry:
     """Public GHCR access only. Never consult Docker credentials or user tokens."""
     def __init__(self, service):
         self.repo = REPOSITORIES[service].removeprefix("ghcr.io/")
-        token = json.loads(get("https://ghcr.io/token?" + urllib.parse.urlencode({"service": "ghcr.io", "scope": f"repository:{self.repo}:pull"})))
+        token = decode_json(get("https://ghcr.io/token?" + urllib.parse.urlencode({"service": "ghcr.io", "scope": f"repository:{self.repo}:pull"})))
         self.headers = {"Authorization": "Bearer " + token["token"], "Accept": "application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json"}
 
     def fetch(self, path):
@@ -173,7 +202,7 @@ class Registry:
     def material(self, digest, version):
         manifest = self.fetch(f"manifests/{digest}")
         require("sha256:" + sha(manifest) == digest, "Manifest digest mismatch")
-        m = json.loads(manifest)
+        m = decode_json(manifest)
         require("manifests" not in m and DIGEST.fullmatch(m.get("config", {}).get("digest", "")), "Single amd64 manifest required")
         config = self.fetch("blobs/" + m["config"]["digest"])
         require("sha256:" + sha(config) == m["config"]["digest"], "Config digest mismatch")
@@ -181,7 +210,8 @@ class Registry:
         return manifest, config
 
     def bundles(self, digest):
-        index = json.loads(self.fetch("referrers/" + digest))
+        index = decode_json(self.fetch("referrers/" + digest))
+        require(index.get("schemaVersion") == 2 and index.get("mediaType") == "application/vnd.oci.image.index.v1+json" and isinstance(index.get("manifests"), list), "Invalid OCI referrers index")
         require(len(index.get("manifests", [])) <= 16, "Too many referrers; review required")
         bundles = []
         for descriptor in index.get("manifests", []):
@@ -191,8 +221,10 @@ class Registry:
             require(DIGEST.fullmatch(d), "Malformed referrer digest")
             raw = self.fetch("manifests/" + d)
             require("sha256:" + sha(raw) == d, "Referrer digest mismatch")
-            m = json.loads(raw)
+            m = decode_json(raw)
+            require(m.get("artifactType") == descriptor["artifactType"] and m.get("mediaType") == "application/vnd.oci.image.manifest.v1+json", "Referrer artifact type mismatch")
             require(m.get("subject", {}).get("digest") == digest and len(m.get("layers", [])) == 1, "Referrer subject mismatch")
+            require(m["layers"][0].get("mediaType") == descriptor["artifactType"], "Wrong native bundle layer media type")
             layer = m["layers"][0]["digest"]
             require(DIGEST.fullmatch(layer), "Invalid bundle layer")
             blob = self.fetch("blobs/" + layer)
@@ -203,7 +235,7 @@ class Registry:
 
 def check_material(manifest, config, service, x, qualified=None):
     require("sha256:" + sha(manifest) == x[service], "Manifest digest mismatch")
-    m, c = json.loads(manifest), json.loads(config)
+    m, c = decode_json(manifest), decode_json(config)
     require("manifests" not in m and "sha256:" + sha(config) == m.get("config", {}).get("digest"), "Wrong manifest/config relationship")
     if qualified:
         require(m["config"]["digest"] == qualified, "Config is not qualified image ID")
@@ -255,10 +287,28 @@ def validate_portable(directory):
     return record
 
 
+def verify_portable(directory, x, p, binary):
+    # Pin the directory inode and copy only bounded regular members. All checksum,
+    # semantic and cryptographic checks use this private immutable-by-input snapshot.
+    fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        names = {f"{s}.{suffix}.json" for s in SERVICES for suffix in ("manifest", "config", "sigstore")} | {"verification.json"}
+        require(set(os.listdir(fd)) == names, "Unexpected portable files")
+        with tempfile.TemporaryDirectory(prefix="verilio-portable-") as temporary:
+            snapshot = Path(temporary)
+            for name in names:
+                issue(snapshot / name, read_regular(name, directory_fd=fd))
+            record = validate_portable(snapshot)
+            require(record["release"] == x, "Portable release differs from trusted inputs")
+            verify_directory(snapshot, x, p, binary)
+    finally:
+        os.close(fd)
+
+
 def sign(directory, output, binary, p):
     require(p["official_signing_enabled"] is True, "Official signing disabled: GHCR/OIDC experiment and owner activation required")
     require(os.environ.get("GITHUB_ACTIONS") == "true" and os.environ.get("GITHUB_REPOSITORY") == p["repository"] and os.environ.get("GITHUB_JOB") == "sign", "Signing requires isolated authorized CI job")
-    publication = json.loads(subprocess.run(["node", str(ROOT.parent / "release-evidence.mjs"), "validate-publication", str(directory)], capture_output=True, check=True, timeout=120).stdout)
+    publication = decode_json(subprocess.run(["node", str(ROOT.parent / "release-evidence.mjs"), "validate-publication", str(directory)], capture_output=True, check=True, timeout=120).stdout)
     x = expected(publication["version"], publication["source_commit"], *(publication["images"][s]["manifest_digest"] for s in SERVICES), p)
     event, ref = os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF"]
     invocation, workflow_commit = os.environ["GITHUB_SHA"], os.environ["GITHUB_WORKFLOW_SHA"]
@@ -267,11 +317,11 @@ def sign(directory, output, binary, p):
     w = publication["workflow"]
     require(w["run_id"] == os.environ["GITHUB_RUN_ID"] and w["run_attempt"] == os.environ["GITHUB_RUN_ATTEMPT"] and w["commit"] == workflow_commit and w["ref"] == os.environ["GITHUB_WORKFLOW_REF"], "Foreign publication invocation")
     # Resolve application release independently of receipt and workflow checkout.
-    tag = json.loads(get(f'https://api.github.com/repos/{p["repository"]}/git/ref/tags/{x["version"]}'))["object"]
+    tag = decode_json(get(f'https://api.github.com/repos/{p["repository"]}/git/ref/tags/{x["version"]}'))["object"]
     for _ in range(4):
         if tag["type"] != "tag":
             break
-        tag = json.loads(get(f'https://api.github.com/repos/{p["repository"]}/git/tags/{tag["sha"]}'))["object"]
+        tag = decode_json(get(f'https://api.github.com/repos/{p["repository"]}/git/tags/{tag["sha"]}'))["object"]
     require(tag["type"] == "commit" and tag["sha"] == x["source"], "Application tag/source mismatch")
     output.mkdir(mode=0o700, parents=False, exist_ok=False)
     status = {"schema": "verilio.signing-attempt/v1", "release": x,
@@ -345,11 +395,11 @@ def receive(output, ids, version):
             return None
     for i, stage in zip(ids, ("qualified", "published")):
         url = "https://api.github.com/repos/andresz74/verilio/actions/artifacts/" + i
-        info = json.loads(get(url, headers))
+        info = decode_json(get(url, headers))
         require(info["workflow_run"]["id"] == int(run) and info["workflow_run"]["head_sha"] == os.environ["GITHUB_SHA"] and info["name"] == f"sbom-{version}-linux-amd64-{run}-{attempt}-{stage}" and info["expired"] is False and info["size_in_bytes"] <= 220000000, "Foreign/expired artifact")
         # Never forward GitHub authorization to the signed download URL.
         try:
-            urllib.request.build_opener(NoRedirect).open(urllib.request.Request(url + "/zip", headers=headers), timeout=60)
+            urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect).open(urllib.request.Request(url + "/zip", headers=headers), timeout=60)
             raise ValueError("Expected signed artifact redirect")
         except urllib.error.HTTPError as e:
             require(e.code == 302, "Artifact download failed")
@@ -392,9 +442,7 @@ def main():
     else:
         x = expected(a.version, a.source_commit, a.api_digest, a.gateway_digest, p)
         if a.bundle_dir:
-            record = validate_portable(a.bundle_dir)
-            require(record["release"] == x, "Portable release differs from trusted inputs")
-            verify_directory(a.bundle_dir, x, p, binary)
+            verify_portable(a.bundle_dir, x, p, binary)
         else:
             require(a.output_dir, "New portable output directory required")
             collect(a.output_dir, x, p, binary)
