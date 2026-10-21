@@ -178,13 +178,18 @@ jobs:
       id-token: write
     env:
       VERSION: ${{ inputs.version || github.ref_name }}
-      DOCKER_CONFIG: ${{ runner.temp }}/verilio-sign-auth
     steps:
       - name: Check out trusted workflow implementation, not application tag
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.workflow_sha }}
           persist-credentials: false
+      - name: Initialize private signing Docker configuration
+        shell: bash
+        run: |
+          umask 077
+          docker_config=$(mktemp -d "${RUNNER_TEMP:?}/verilio-sign-auth.XXXXXX")
+          printf 'DOCKER_CONFIG=%s\n' "$docker_config" >> "$GITHUB_ENV"
       - name: Set up receipt validator Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:

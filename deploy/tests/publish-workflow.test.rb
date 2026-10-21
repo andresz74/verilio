@@ -146,6 +146,46 @@ Dir.mktmpdir('verilio-upload-contract-') do |dir|
 end
 sign = workflow['jobs']['sign']
 sign_steps = sign['steps']
+# A small offline guard for job-env context roots; actionlint remains the full
+# Actions expression/schema validator (including bare names and other locations).
+job_env_contexts_valid = lambda do |env|
+  allowed = %w[github needs strategy matrix vars secrets inputs]
+  env.values.all? do |value|
+    value.to_s.scan(/\$\{\{(.*?)\}\}/m).flatten.all? do |expression|
+      tokens = expression.scan(/'(?:''|[^'])*'|[A-Za-z_]\w*|[^\s]/)
+      tokens.each_index.all? do |i|
+        token = tokens[i]
+        !token.match?(/\A[A-Za-z_]\w*\z/) || tokens[i - 1] == '.' ||
+          !['.', '['].include?(tokens[i + 1]) || allowed.include?(token)
+      end
+    end
+  end
+end
+check.call('all job-level env expressions use supported Actions contexts',
+  workflow['jobs'].values.all? { |j| job_env_contexts_valid.call(j.fetch('env', {})) })
+%w[runner steps env job unknown].each do |context|
+  check.call("job-level env rejects unsupported #{context} context",
+    !job_env_contexts_valid.call({'BAD' => '${{ ' + context + '.temp }}'}))
+end
+check.call('job-env guard accepts allowed contexts and ignores quoted context-like text',
+  job_env_contexts_valid.call({'GOOD' => "${{ format('runner.temp', needs.publish.outputs.version, inputs.version) }}"}))
+initialize_config = sign_steps.find { |s| s['name'] == 'Initialize private signing Docker configuration' }
+check.call('Docker config is initialized in a runner step before authentication/signing',
+  !sign.fetch('env', {}).key?('DOCKER_CONFIG') && initialize_config &&
+  sign_steps.index(initialize_config) < sign_steps.index { |s| s['name'] == 'Authenticate signature attachment only' })
+Dir.mktmpdir('verilio-sign-config-') do |dir|
+  runner_temp = File.join(dir, 'runner temp')
+  FileUtils.mkdir_p(runner_temp)
+  env_file = File.join(dir, 'github env')
+  File.write(env_file, "EXISTING=preserved\n")
+  _, error, status = Open3.capture3({'RUNNER_TEMP'=>runner_temp, 'GITHUB_ENV'=>env_file}, 'bash', '-e', '-o', 'pipefail', '-c', initialize_config['run'])
+  lines = File.readlines(env_file, chomp: true)
+  config = lines.last.delete_prefix('DOCKER_CONFIG=')
+  check.call('runner initialization exports a new private 0700 directory and preserves GITHUB_ENV',
+    status.success? && error.empty? && lines.length == 2 && lines.first == 'EXISTING=preserved' &&
+    config.start_with?(runner_temp + '/verilio-sign-auth.') && File.directory?(config) &&
+    !File.symlink?(config) && (File.stat(config).mode & 0o777) == 0o700)
+end
 check.call('official signing remains literally disabled on merge',
   sign['if'] == "${{ false && needs.publish.result == 'success' }}" && sign['needs'] == 'publish' &&
   !text.include?('vars.') && !triggers['workflow_dispatch']['inputs'].key?('sign'))
