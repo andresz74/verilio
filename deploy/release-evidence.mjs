@@ -385,6 +385,32 @@ export function evidence(dir, withImages = false) {
   if (withImages) inspect(q);
   return { q, e };
 }
+// Read-only signing boundary: no local images and no receipt mutation.
+export function publication(dir) {
+  const { q, e } = evidence(dir, false);
+  const p = read(path.join(dir, "publication.json"));
+  base(p, "publication");
+  requireThat(
+    p.publication === "verified" && p.qualification === "passed" && e.qualification === "passed" &&
+      p.evidence_sha256 === checksum(path.join(dir, "evidence.json")) &&
+      p.version === q.version && p.source_commit === q.source_commit &&
+      p.platform === q.platform &&
+      JSON.stringify(p.workflow) === JSON.stringify(q.workflow),
+    "Publication chain mismatch or incomplete publication",
+  );
+  for (const s of services) {
+    const image = p.images[s];
+    requireThat(
+      Object.entries(e.images[s]).every(([k, v]) => image[k] === v) &&
+        digest.test(image.manifest_digest) &&
+        image.config_digest === q.images[s].id &&
+        image.ref === `${image.repository}:${q.version}` &&
+        image.digest_pinned_identity === "passed" && image.anonymous === "passed",
+      "Publication image mapping mismatch",
+    );
+  }
+  return p;
+}
 export function state(dir, component, value) {
   const file = path.join(dir, "attempt-status.json");
   const status = fs.existsSync(file)
@@ -713,6 +739,9 @@ function main([command, ...args]) {
       publication: "verified",
     });
     state(dir, "publication", "verified");
+  } else if (command === "validate-publication") {
+    requireThat(args.length === 1, "Expected completed evidence directory");
+    console.log(JSON.stringify(publication(args[0])));
   } else if (command === "status") state(...args);
   else throw new Error("Unknown release-evidence command");
 }

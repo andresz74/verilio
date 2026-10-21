@@ -125,6 +125,13 @@ Repeated scans can differ in timestamps/namespaces; byte reproducibility is not 
 Unsigned checksums/receipts establish consistency, **not independent publisher authenticity**.
 The trust boundary includes the approved workflow, runner, scanner and Docker daemon.
 
+D11.2 adds a read-only `validate-publication` boundary and default-off signing/
+consumer-verification infrastructure; it does not sign these receipts or attest
+qualification/SBOM claims. Official signing remains disabled pending the separately
+authorized GHCR/OIDC experiment and owner activation. See
+[signature verification](SIGNATURE_VERIFICATION.md). Existing alpha.5 is not
+retroactively signed and D11.3–D11.6 remain unimplemented.
+
 ## Retention, failures and retries
 
 The workflow must successfully upload pre-publication evidence before registry login.

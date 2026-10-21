@@ -22,6 +22,9 @@ jobs:
   publish:
     if: github.repository == 'andresz74/verilio'
     runs-on: ubuntu-24.04
+    outputs:
+      qualified_artifact: ${{ steps.qualified_evidence.outputs.artifact-id }}
+      publication_artifact: ${{ steps.final_evidence.outputs.artifact-id }}
     env:
       VERSION: ${{ inputs.version || github.ref_name }}
       VERILIO_PLATFORM: linux/amd64
@@ -95,6 +98,7 @@ jobs:
         run: |
           ./deploy/generate-release-sbom.sh --qualification "$RUNNER_TEMP/verilio-sbom/qualification.json" --output-dir "$RUNNER_TEMP/verilio-evidence" --syft "$RUNNER_TEMP/verilio-syft/syft"
       - name: Preserve required pre-publication evidence
+        id: qualified_evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: sbom-${{ env.VERSION }}-linux-amd64-${{ github.run_id }}-${{ github.run_attempt }}-qualified
@@ -160,3 +164,82 @@ jobs:
       - name: Clean up development PostgreSQL even on failure
         if: always()
         run: docker compose -f docker-compose.yml down --volumes --remove-orphans
+
+  sign:
+    # Deliberately literal/default-off. Owner-reviewed activation requires the
+    # disposable GHCR/OIDC experiment, policy update and release cutover decision.
+    if: ${{ false && needs.publish.result == 'success' }}
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read # Exact same-run artifact metadata/download only.
+      packages: write
+      id-token: write
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
+    steps:
+      - name: Check out trusted workflow implementation, not application tag
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Initialize private signing Docker configuration
+        shell: bash
+        run: |
+          umask 077
+          docker_config=$(mktemp -d "${RUNNER_TEMP:?}/verilio-sign-auth.XXXXXX")
+          printf 'DOCKER_CONFIG=%s\n' "$docker_config" >> "$GITHUB_ENV"
+      - name: Set up receipt validator Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.1.0"
+      - name: Retrieve exact same-attempt evidence and validate completed chain
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QUALIFIED_ARTIFACT: ${{ needs.publish.outputs.qualified_artifact }}
+          PUBLICATION_ARTIFACT: ${{ needs.publish.outputs.publication_artifact }}
+        run: |
+          python3 deploy/signing/release_signatures.py receive --version "$VERSION" --artifact-ids "$QUALIFIED_ARTIFACT" "$PUBLICATION_ARTIFACT" --output-dir "$RUNNER_TEMP/verilio-sign-input"
+          node deploy/release-evidence.mjs validate-publication "$RUNNER_TEMP/verilio-sign-input"
+      - name: Obtain reviewed pinned Cosign
+        run: python3 deploy/signing/release_signatures.py install --output-dir "$RUNNER_TEMP/verilio-cosign"
+      - name: Authenticate signature attachment only
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          logout: true
+      - name: Sign immutable pair and verify anonymously
+        id: paired_signatures
+        run: ./deploy/sign-release-images.sh --evidence-dir "$RUNNER_TEMP/verilio-sign-input" --output-dir "$RUNNER_TEMP/verilio-sign-output" --cosign "$RUNNER_TEMP/verilio-cosign/cosign"
+      - name: Preserve bounded signature evidence including partial outcomes
+        id: signing_evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: signatures-${{ env.VERSION }}-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 30
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/verilio-sign-output/attempt-status.json
+            ${{ runner.temp }}/verilio-sign-output/signing.json
+            ${{ runner.temp }}/verilio-sign-output/api.sigstore.json
+            ${{ runner.temp }}/verilio-sign-output/gateway.sigstore.json
+            ${{ runner.temp }}/verilio-sign-output/portable/api.sigstore.json
+            ${{ runner.temp }}/verilio-sign-output/portable/gateway.sigstore.json
+            ${{ runner.temp }}/verilio-sign-output/portable/api.manifest.json
+            ${{ runner.temp }}/verilio-sign-output/portable/gateway.manifest.json
+            ${{ runner.temp }}/verilio-sign-output/portable/api.config.json
+            ${{ runner.temp }}/verilio-sign-output/portable/gateway.config.json
+            ${{ runner.temp }}/verilio-sign-output/portable/verification.json
+      - name: Report signing evidence delivery separately
+        if: always()
+        env:
+          DELIVERY: ${{ steps.signing_evidence.outcome }}
+          SIGNING: ${{ steps.paired_signatures.outcome }}
+        run: |
+          acceptance=incomplete
+          if [[ "$SIGNING" == success && "$DELIVERY" == success ]]; then acceptance=paired-verified; fi
+          echo "Signing acceptance: $acceptance; evidence delivery: $DELIVERY. Never rerun publication as recovery." >> "$GITHUB_STEP_SUMMARY"
